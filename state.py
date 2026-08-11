@@ -7,3 +7,4 @@ class AgentState(TypedDict):
     code_path: str
     build_result: str
     retry_count: int
+    task_dir: str

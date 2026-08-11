@@ -2,7 +2,7 @@ import re
 import subprocess
 import os
 from state import AgentState
-from config import llm, PROMPTS, OUTPUT_DIR
+from config import llm, PROMPTS, BASE_DIR
 
 BuildSuccessMessage = "static analysis passed, compilation successful"
 
@@ -30,7 +30,10 @@ def code_executor_node(state: AgentState):
     code = match.group(1).strip()
     
     # Ensure the output directory exists
-    file_path = OUTPUT_DIR / "tree_traversal.go"
+    task_name = state.get("task_dir", "default_task")
+    dynamic_output_dir = BASE_DIR / "output" / "go-code" / task_name
+    dynamic_output_dir.mkdir(parents=True, exist_ok=True)
+    file_path = dynamic_output_dir / f"{task_name}.go"
     
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(code)
@@ -56,3 +59,14 @@ def code_fixer_node(state: AgentState):
         "final_output": response.content, 
         "retry_count": current_retry
     }
+
+def task_summarizer_node(state: AgentState):
+    prompt = PROMPTS["task_summarizer"].format(input_question=state["input_question"])
+    response = llm.invoke(prompt)
+    
+    # Generate a slug from the response content
+    slug = re.sub(r'[^a-zA-Z0-9_-]', '_', response.content.strip()).lower()
+    if not slug:
+        slug = "default_task"
+        
+    return {"task_dir": slug}

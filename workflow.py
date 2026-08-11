@@ -1,11 +1,18 @@
 from langgraph.graph import StateGraph, END
 from state import AgentState
-from nodes import intent_classifier_node, code_generator_node, general_assistant_node, code_executor_node, code_fixer_node, BuildSuccessMessage
-
+from nodes import (
+    intent_classifier_node, 
+    task_summarizer_node,
+    code_generator_node, 
+    general_assistant_node, 
+    code_executor_node, 
+    code_fixer_node, 
+    BuildSuccessMessage
+)
 # --- route  ---
 def route_by_category(state: AgentState):
     if state["category"] == "coding":
-        return "coding_node"
+        return "task_summarizer_node"
     return "general_node"
 
 def route_after_execute(state: AgentState):
@@ -14,7 +21,7 @@ def route_after_execute(state: AgentState):
     
     if state.get("retry_count", 0) < 3:
         print(f"\n[system log] compile failed, retry {state.get('retry_count', 0) + 1} time ...")
-        return "fix_code_node"
+        return "code_fixer_node"
     
     print("\n[system log] reached maximum retry attempts, fix failed.")
     return END
@@ -25,6 +32,7 @@ def create_app():
 
     # register nodes
     workflow.add_node("intent_classifier_node", intent_classifier_node)
+    workflow.add_node("task_summarizer_node", task_summarizer_node)
     workflow.add_node("code_generator_node", code_generator_node)
     workflow.add_node("general_assistant_node", general_assistant_node)
     workflow.add_node("code_executor_node", code_executor_node)
@@ -35,8 +43,12 @@ def create_app():
     workflow.add_conditional_edges(
         "intent_classifier_node",
         route_by_category,
-        {"coding_node": "code_generator_node", "general_node": "general_assistant_node"}
+        {
+            "task_summarizer_node": "task_summarizer_node", 
+            "general_node": "general_assistant_node"
+        }
     )
+    workflow.add_edge("task_summarizer_node", "code_generator_node")
     workflow.add_edge("code_generator_node", "code_executor_node")
     workflow.add_conditional_edges(
         "code_executor_node",
