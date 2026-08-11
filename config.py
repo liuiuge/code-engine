@@ -13,10 +13,6 @@ os.environ["no_proxy"] = "localhost,127.0.0.1"
 BASE_DIR = Path(__file__).resolve().parent
 PROMPT_DIR = BASE_DIR / "prompts"
 
-# Ensure the output directory exists
-OUTPUT_DIR = BASE_DIR / "output" / "go-code" / "260811"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
 try:
     PROMPTS = {
         "intent_classifier": (PROMPT_DIR / "intent_classifier.md").read_text(encoding="utf-8"),
@@ -28,11 +24,12 @@ try:
 except FileNotFoundError as e:
     raise RuntimeError(f"load prompts failed，please check the path: {e}")
 
+model_local = "reecdev/qwen3.5-lowvram:9b"
+model_minimax = " minimax-m3:cloud"
+
 # 3. Initialize the LLM
 llm = ChatOllama(
-    model="reecdev/qwen3.5-lowvram:9b", 
+    model=model_minimax, 
     base_url="http://127.0.0.1:11434",
-    temperature=0.1,
-    num_predict=4096,
-    reasoning=False
+    temperature=0.1
 )
