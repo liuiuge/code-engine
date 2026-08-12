@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CodeEngine · 题目与 Go 代码浏览器</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #e3e6ea;
+    --text: #1f2329;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --accent-soft: #eff4ff;
+    --code-bg: #f4f5f7;
+    --easy: #16a34a;
+    --medium: #d97706;
+    --hard: #dc2626;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.1);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px; line-height: 1.55;
+  }
+  header {
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 12px 20px; display: flex; align-items: center; gap: 18px; position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .tabs { display: flex; gap: 4px; margin-left: auto; }
+  .tab {
+    border: 1px solid transparent; background: transparent; color: var(--muted);
+    padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 550;
+  }
+  .tab.active { background: var(--accent-soft); color: var(--accent); border-color: #d6e2ff; }
+  main { max-width: 1080px; margin: 18px auto; padding: 0 16px; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px; box-shadow: var(--shadow); margin-bottom: 14px;
+  }
+  .toolbar input[type="text"], .toolbar select {
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+    font-size: 13px; background: #fff; color: var(--text); min-width: 0;
+  }
+  .toolbar input.search { flex: 1 1 220px; }
+  .toolbar label { color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
+  button.btn {
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 550;
+  }
+  button.btn.ghost { background: #fff; color: var(--accent); }
+  button.btn:disabled { opacity: .5; cursor: default; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px; margin-bottom: 10px; box-shadow: var(--shadow); cursor: pointer;
+    transition: border-color .15s;
+  }
+  .card:hover { border-color: #c7d2fe; }
+  .card .row1 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .card .title { font-weight: 650; font-size: 15px; }
+  .card .meta { color: var(--muted); font-size: 12px; }
+  .badge {
+    font-size: 11px; font-weight: 650; padding: 2px 8px; border-radius: 999px; color: #fff;
+  }
+  .badge.Easy { background: var(--easy); }
+  .badge.Medium { background: var(--medium); }
+  .badge.Hard { background: var(--hard); }
+  .badge.Unknown { background: #9ca3af; }
+  .tag {
+    font-size: 11px; color: var(--accent); background: var(--accent-soft);
+    border: 1px solid #d6e2ff; padding: 1px 7px; border-radius: 6px; margin-right: 4px;
+  }
+  .pill { font-size: 11px; color: var(--muted); border: 1px solid var(--border); padding: 1px 7px; border-radius: 6px; }
+  .pill.go { color: var(--easy); border-color: #bbf7d0; background: #f0fdf4; }
+
+  .pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 14px 0 30px; }
+  .pager .info { color: var(--muted); font-size: 12px; }
+
+  .detail { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; box-shadow: var(--shadow); }
+  .detail h2 { margin: 0 0 4px; font-size: 20px; }
+  .detail .kw { color: var(--muted); }
+  .detail .block { margin-top: 18px; }
+  .detail .block > h3 { font-size: 14px; margin: 0 0 8px; color: var(--text); border-left: 3px solid var(--accent); padding-left: 8px; }
+  pre.code {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; overflow: auto; font-size: 12.5px; line-height: 1.5;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  pre.code code { white-space: pre; }
+  .md h1, .md h2, .md h3 { line-height: 1.3; margin: 14px 0 6px; }
+  .md p { margin: 8px 0; }
+  .md ul { margin: 6px 0; padding-left: 20px; }
+  .md a { color: var(--accent); }
+  .md code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; font-family: monospace; font-size: 12px; }
+  .back { margin-bottom: 12px; }
+  .empty, .err { text-align: center; color: var(--muted); padding: 40px 0; }
+  .err { color: var(--hard); }
+  .spinner { text-align:center; color: var(--muted); padding: 30px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>CodeEngine</h1>
+    <div class="sub">已生成题目 · Go 代码浏览器</div>
+  </div>
+  <div class="tabs">
+    <button class="tab active" data-tab="problems">题目</button>
+    <button class="tab" data-tab="gocode">Go 代码</button>
+  </div>
+</header>
+
+<main>
+  <!-- PROBLEMS -->
+  <section id="view-problems" class="view active">
+    <div class="toolbar">
+      <input type="text" class="search" id="p-search" placeholder="搜索标题…" />
+      <select id="p-difficulty"><option value="">难度：全部</option><option>Easy</option><option>Medium</option><option>Hard</option></select>
+      <select id="p-tag"><option value="">标签：全部</option></select>
+      <label><input type="checkbox" id="p-go" /> 仅含 Go 代码</label>
+      <button class="btn" id="p-search-btn">查询</button>
+    </div>
+    <div id="problems-list"></div>
+    <div class="pager" id="problems-pager"></div>
+  </section>
+
+  <!-- GO CODE -->
+  <section id="view-gocode" class="view">
+    <div class="toolbar">
+      <input type="text" class="search" id="g-search" placeholder="搜索任务名…" />
+      <button class="btn" id="g-search-btn">查询</button>
+    </div>
+    <div id="gocode-list"></div>
+    <div class="pager" id="gocode-pager"></div>
+  </section>
+
+  <!-- DETAIL -->
+  <section id="view-detail" class="view">
+    <div class="back"><button class="btn ghost" id="detail-back">← 返回</button></div>
+    <div id="detail-content"></div>
+  </section>
+</main>
+
+<script>
+// API base: when opened from file://, point at the running server; otherwise same-origin.
+const API_BASE = (location.protocol === 'file:') ? 'http://127.0.0.1:8000' : '';
+const PER_PAGE = 10;
+
+const $ = (id) => document.getElementById(id);
+function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+function esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+async function api(path, params) {
+  const u = new URL(API_BASE + path, location.href);
+  if (params) Object.entries(params).forEach(([k, v]) => { if (v !== '' && v != null) u.searchParams.set(k, v); });
+  const r = await fetch(u.toString());
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+/* ---------- markdown (minimal, safe) ---------- */
+function inline(s) {
+  return s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+          .replace(/`([^`]+?)`/g, '<code>$1</code>')
+          .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+function renderTextParts(txt) {
+  const lines = txt.split('\n');
+  let html = '', para = [], listOpen = false;
+  const flush = () => { if (para.length) { html += '<p>' + para.join('<br>') + '</p>'; para = []; } };
+  const closeList = () => { if (listOpen) { html += '</ul>'; listOpen = false; } };
+  for (let line of lines) {
+    const h = line.match(/^(#{1,3})\s+(.*)$/);
+    if (h) { flush(); closeList(); const l = h[1].length; html += '<h' + l + '>' + inline(h[2]) + '</h' + l + '>'; continue; }
+    const li = line.match(/^\s*-\s+(.*)$/);
+    if (li) { flush(); if (!listOpen) { html += '<ul>'; listOpen = true; } html += '<li>' + inline(li[1]) + '</li>'; continue; }
+    if (line.trim() === '') { flush(); closeList(); continue; }
+    para.push(inline(line));
+  }
+  flush(); closeList();
+  return html;
+}
+function renderMarkdown(md) {
+  if (!md) return '';
+  const escaped = esc(md);
+  const parts = escaped.split(/```/);
+  let out = '';
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 0) out += renderTextParts(parts[i]);
+    else { const nl = parts[i].indexOf('\n'); const code = nl >= 0 ? parts[i].slice(nl + 1) : parts[i]; out += '<pre class="code"><code>' + code.replace(/\n$/, '') + '</code></pre>'; }
+  }
+  return out;
+}
+
+/* ---------- views ---------- */
+function showView(name) {
+  ['problems', 'gocode', 'detail'].forEach(v => $('view-' + v).classList.toggle('active', v === name));
+}
+function setTabs(active) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === active));
+}
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  setTabs(t.dataset.tab);
+  showView(t.dataset.tab);
+}));
+
+/* ---------- problems ---------- */
+let pPage = 1;
+async function loadProblems() {
+  const list = $('problems-list');
+  list.innerHTML = '<div class="spinner">加载中…</div>';
+  const params = {
+    search: $('p-search').value.trim(),
+    difficulty: $('p-difficulty').value,
+    tag: $('p-tag').value,
+    limit: PER_PAGE, offset: (pPage - 1) * PER_PAGE,
+  };
+  try {
+    const data = await api('/api/problems', params);
+    list.innerHTML = '';
+    if (!data.items.length) { list.innerHTML = '<div class="empty">没有匹配的题目。</div>'; }
+    data.items.forEach(p => {
+      const card = el('div', 'card');
+      const tags = (p.tags || []).map(t => '<span class="tag">' + esc(t) + '</span>').join('');
+      card.innerHTML =
+        '<div class="row1"><span class="title">' + esc(p.title) + '</span>' +
+        '<span class="badge ' + (p.difficulty || 'Unknown') + '">' + esc(p.difficulty) + '</span>' +
+        (p.paid ? '<span class="pill">付费</span>' : '') +
+        (p.has_go_code ? '<span class="pill go">有 Go 代码</span>' : '') +
+        '<span class="meta"># ' + esc(p.id) + ' · ' + esc(p.slug) + '</span></div>' +
+        (tags ? '<div style="margin-top:6px">' + tags + '</div>' : '');
+      card.addEventListener('click', () => openProblem(p.slug));
+      list.appendChild(card);
+    });
+    renderPager($('problems-pager'), data.total, pPage, PER_PAGE, (pg) => { pPage = pg; loadProblems(); });
+  } catch (e) { list.innerHTML = '<div class="err">加载失败：' + esc(e.message) + '</div>'; }
+}
+
+/* ---------- go code ---------- */
+let gPage = 1;
+async function loadGoCode() {
+  const list = $('gocode-list');
+  list.innerHTML = '<div class="spinner">加载中…</div>';
+  try {
+    const data = await api('/api/go-code', {
+      search: $('g-search').value.trim(), limit: PER_PAGE, offset: (gPage - 1) * PER_PAGE,
+    });
+    list.innerHTML = '';
+    if (!data.items.length) { list.innerHTML = '<div class="empty">没有匹配的 Go 代码。</div>'; }
+    data.items.forEach(g => {
+      const card = el('div', 'card');
+      card.innerHTML =
+        '<div class="row1"><span class="title">' + esc(g.task_name) + '</span>' +
+        (g.related_problem ? '<span class="pill">题：' + esc(g.related_problem) + '</span>' : '') +
+        '<span class="meta">' + esc(g.file) + ' · ' + g.size_bytes + ' B · ' + g.line_count + ' 行</span></div>';
+      card.addEventListener('click', () => openGoCode(g.task_name));
+      list.appendChild(card);
+    });
+    renderPager($('gocode-pager'), data.total, gPage, PER_PAGE, (pg) => { gPage = pg; loadGoCode(); });
+  } catch (e) { list.innerHTML = '<div class="err">加载失败：' + esc(e.message) + '</div>'; }
+}
+
+/* ---------- pager ---------- */
+function renderPager(host, total, page, per, onGo) {
+  const pages = Math.max(1, Math.ceil(total / per));
+  host.innerHTML = '';
+  const prev = el('button', 'btn ghost', '上一页'); prev.disabled = page <= 1;
+  prev.addEventListener('click', () => onGo(page - 1));
+  const info = el('span', 'info', '第 ' + page + ' / ' + pages + ' 页 · 共 ' + total + ' 条');
+  const next = el('button', 'btn ghost', '下一页'); next.disabled = page >= pages;
+  next.addEventListener('click', () => onGo(page + 1));
+  host.append(prev, info, next);
+}
+
+/* ---------- detail ---------- */
+async function openProblem(slug) {
+  showView('detail');
+  const c = $('detail-content');
+  c.innerHTML = '<div class="spinner">加载中…</div>';
+  try {
+    const p = await api('/api/problems/' + encodeURIComponent(slug));
+    let html = '<div class="detail"><h2>' + esc(p.title) + '</h2>' +
+      '<div class="meta"><span class="badge ' + (p.difficulty || 'Unknown') + '">' + esc(p.difficulty) + '</span> ' +
+      (p.isPaidOnly ? '<span class="pill">付费</span> ' : '') +
+      '# ' + esc(p.questionFrontendId) + ' · <a href="' + esc(p.url) + '" target="_blank" rel="noopener">' + esc(p.titleSlug) + '</a></div>';
+    const tags = (p.topicTags || []).map(t => '<span class="tag">' + esc(t.name) + '</span>').join(' ');
+    if (tags) html += '<div style="margin-top:8px">' + tags + '</div>';
+    html += '<div class="block md">' + renderMarkdown(p.description_md) + '</div>';
+    if (p.exampleTestcaseList && p.exampleTestcaseList.length) {
+      html += '<div class="block"><h3>示例</h3>';
+      p.exampleTestcaseList.forEach((ex, i) => { html += '<pre class="code"><code>' + esc(ex) + '</code></pre>'; });
+      html += '</div>';
+    }
+    if (p.hints && p.hints.length) {
+      html += '<div class="block"><h3>提示</h3><ol>' + p.hints.map(h => '<li>' + esc(h) + '</li>').join('') + '</ol></div>';
+    }
+    if (p.go_template) {
+      html += '<div class="block"><h3>Go 模板</h3><pre class="code"><code>' + esc(p.go_template) + '</code></pre></div>';
+    }
+    if (p.has_go_code) {
+      html += '<div class="block"><button class="btn" id="to-gocode">查看生成的 Go 代码 →</button></div>';
+    }
+    html += '</div>';
+    c.innerHTML = html;
+    const tg = $('to-gocode');
+    if (tg) tg.addEventListener('click', () => openGoCode(p.titleSlug.replace(/-/g, '_')));
+  } catch (e) { c.innerHTML = '<div class="err">加载失败：' + esc(e.message) + '</div>'; }
+}
+
+async function openGoCode(task) {
+  showView('detail');
+  const c = $('detail-content');
+  c.innerHTML = '<div class="spinner">加载中…</div>';
+  try {
+    const g = await api('/api/go-code/' + encodeURIComponent(task));
+    let html = '<div class="detail"><h2>' + esc(g.task_name) + '</h2>' +
+      '<div class="meta">' + esc(g.rel_path) + ' · ' + g.size_bytes + ' B · ' + g.line_count + ' 行' +
+      (g.related_problem ? ' · 题目：<a href="#" id="to-problem">' + esc(g.related_problem) + '</a>' : '') + '</div>' +
+      '<div class="block"><h3>源码</h3><pre class="code"><code>' + esc(g.content) + '</code></pre></div>' +
+      '<div class="block"><a href="' + API_BASE + '/api/go-code/' + encodeURIComponent(task) + '/raw" target="_blank" rel="noopener" class="btn ghost">下载 .go 文件</a></div>' +
+      '</div>';
+    c.innerHTML = html;
+    const tp = $('to-problem');
+    if (tp) tp.addEventListener('click', (ev) => { ev.preventDefault(); openProblem(g.related_problem); });
+  } catch (e) { c.innerHTML = '<div class="err">加载失败：' + esc(e.message) + '</div>'; }
+}
+
+$('detail-back').addEventListener('click', () => {
+  // back to whichever list tab is active
+  const active = document.querySelector('.tab.active').dataset.tab;
+  showView(active);
+});
+
+/* ---------- init ---------- */
+(async function init() {
+  try {
+    const stats = await api('/api/stats');
+    const sel = $('p-tag');
+    (stats.tags || []).forEach(t => { const o = document.createElement('option'); o.value = t; o.textContent = t; sel.appendChild(o); });
+  } catch (e) { /* stats optional */ }
+  $('p-search-btn').addEventListener('click', () => { pPage = 1; loadProblems(); });
+  $('p-search').addEventListener('keydown', e => { if (e.key === 'Enter') { pPage = 1; loadProblems(); } });
+  $('p-difficulty').addEventListener('change', () => { pPage = 1; loadProblems(); });
+  $('p-tag').addEventListener('change', () => { pPage = 1; loadProblems(); });
+  $('p-go').addEventListener('change', () => { pPage = 1; loadProblems(); });
+  $('g-search-btn').addEventListener('click', () => { gPage = 1; loadGoCode(); });
+  $('g-search').addEventListener('keydown', e => { if (e.key === 'Enter') { gPage = 1; loadGoCode(); } });
+  loadProblems();
+})();
+</script>
+</body>
+</html>

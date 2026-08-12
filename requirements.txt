@@ -1,3 +1,7 @@
 langgraph
 langchain-ollama
 pyyaml
+
+# Web API (serves generated problems & go-code)
+fastapi>=0.110
+uvicorn>=0.27
