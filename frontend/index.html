@@ -46,10 +46,11 @@
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
     padding: 12px; box-shadow: var(--shadow); margin-bottom: 14px;
   }
-  .toolbar input[type="text"], .toolbar select {
+  .toolbar input[type="text"], .toolbar select, .toolbar input[type="number"] {
     border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
     font-size: 13px; background: #fff; color: var(--text); min-width: 0;
   }
+  .toolbar input[type="number"] { width: 72px; }
   .toolbar input.search { flex: 1 1 220px; }
   .toolbar label { color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
   button.btn {
@@ -129,7 +130,27 @@
       <select id="p-difficulty"><option value="">难度：全部</option><option>Easy</option><option>Medium</option><option>Hard</option></select>
       <select id="p-tag"><option value="">标签：全部</option></select>
       <label><input type="checkbox" id="p-go" /> 仅含 Go 代码</label>
+      <label>排序
+        <select id="p-order-by">
+          <option value="id">ID</option>
+          <option value="title">标题</option>
+          <option value="difficulty">难度</option>
+          <option value="slug">slug</option>
+        </select>
+      </label>
+      <select id="p-order"><option value="asc">升序</option><option value="desc">降序</option></select>
       <button class="btn" id="p-search-btn">查询</button>
+      <button class="btn ghost" id="p-pull-toggle">拉取新题目</button>
+      <input type="text" id="p-pull-slug" placeholder="按 slug/URL 拉取单题" />
+      <button class="btn ghost" id="p-pull-one">拉取</button>
+    </div>
+    <div class="toolbar" id="pull-panel" style="display:none">
+      <label>数量 <input type="number" id="pull-limit" value="20" min="1" max="2000" /></label>
+      <select id="pull-difficulty"><option value="">难度：全部</option><option>Easy</option><option>Medium</option><option>Hard</option></select>
+      <input type="text" id="pull-tags" placeholder="标签(逗号分隔，可选)" />
+      <label><input type="checkbox" id="pull-force" /> 覆盖已缓存</label>
+      <button class="btn" id="pull-start">开始拉取</button>
+      <span id="pull-status" class="meta"></span>
     </div>
     <div id="problems-list"></div>
     <div class="pager" id="problems-pager"></div>
@@ -166,6 +187,70 @@ async function api(path, params) {
   const r = await fetch(u.toString());
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
+}
+async function apiPost(path, body) {
+  const u = new URL(API_BASE + path, location.href);
+  const r = await fetch(u.toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  if (!r.ok) {
+    let msg = 'HTTP ' + r.status + ' ' + r.statusText;
+    try {
+      const j = await r.json();
+      if (j && j.detail) {
+        msg = Array.isArray(j.detail)
+          ? j.detail.map(d => d.msg || String(d)).join('; ')
+          : String(j.detail);
+      }
+    } catch (e) { /* keep default message */ }
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+/* ---------- pull from LeetCode ---------- */
+async function pullOne(identifier) {
+  return apiPost('/api/problems/' + encodeURIComponent(identifier) + '/pull', {});
+}
+async function doPull() {
+  const btn = $('pull-start');
+  btn.disabled = true;
+  const st = $('pull-status');
+  st.textContent = '拉取中…';
+  const tagsRaw = $('pull-tags').value.trim();
+  const body = {
+    limit: parseInt($('pull-limit').value, 10) || 20,
+    difficulty: $('pull-difficulty').value || null,
+    tags: tagsRaw ? tagsRaw.split(',').map(s => s.trim()).filter(Boolean) : null,
+    force: $('pull-force').checked,
+  };
+  try {
+    const res = await apiPost('/api/problems/pull', body);
+    let msg = '完成：新增 ' + res.pulled + '，跳过 ' + res.skipped + '，索引共 ' + res.total_indexed + ' 题';
+    if (res.errors && res.errors.length) msg += '；错误 ' + res.errors.length + '：' + res.errors.join(', ');
+    if (res.slugs && res.slugs.length) msg += '（' + res.slugs.join(', ') + '）';
+    st.textContent = msg;
+    await loadTags();
+    loadProblems();
+  } catch (e) {
+    st.textContent = '失败：' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadTags() {
+  try {
+    const stats = await api('/api/stats');
+    const sel = $('p-tag');
+    sel.innerHTML = '<option value="">标签：全部</option>';
+    (stats.tags || []).forEach(t => {
+      const o = document.createElement('option');
+      o.value = t; o.textContent = t; sel.appendChild(o);
+    });
+  } catch (e) { /* stats optional */ }
 }
 
 /* ---------- markdown (minimal, safe) ---------- */
@@ -223,6 +308,8 @@ async function loadProblems() {
     search: $('p-search').value.trim(),
     difficulty: $('p-difficulty').value,
     tag: $('p-tag').value,
+    order_by: $('p-order-by').value,
+    order: $('p-order').value,
     limit: PER_PAGE, offset: (pPage - 1) * PER_PAGE,
   };
   try {
@@ -310,10 +397,41 @@ async function openProblem(slug) {
     if (p.has_go_code) {
       html += '<div class="block"><button class="btn" id="to-gocode">查看生成的 Go 代码 →</button></div>';
     }
+    html += '<div class="block"><button class="btn" id="gen-code">生成 Go 代码</button> <span id="gen-status" class="meta"></span></div>';
+    html += '<div class="block"><button class="btn ghost" id="repull">从 LeetCode 重新拉取</button> <span id="repull-status" class="meta"></span></div>';
     html += '</div>';
     c.innerHTML = html;
     const tg = $('to-gocode');
-    if (tg) tg.addEventListener('click', () => openGoCode(p.titleSlug.replace(/-/g, '_')));
+    if (tg) tg.addEventListener('click', () => openGoCode(p.titleSlug));
+    const gc = $('gen-code');
+    if (gc) gc.addEventListener('click', async () => {
+      gc.disabled = true;
+      const gs = $('gen-status');
+      gs.textContent = '生成中（LLM → 编译）…';
+      try {
+        const r = await apiPost('/api/problems/' + encodeURIComponent(p.titleSlug) + '/generate');
+        gs.textContent = r.success ? '完成 ✓ 编译通过' : '完成 ✗ 编译未通过';
+        if (r.task_name) openGoCode(r.task_name);
+        else openProblem(p.titleSlug);
+      } catch (e) {
+        gs.textContent = '失败：' + e.message;
+        gc.disabled = false;
+      }
+    });
+    const rp = $('repull');
+    if (rp) rp.addEventListener('click', async () => {
+      rp.disabled = true;
+      const rs = $('repull-status');
+      rs.textContent = '拉取中…';
+      try {
+        const r = await pullOne(p.titleSlug);
+        rs.textContent = (r.status === 'updated' ? '已更新' : '已创建') + '：' + r.slug;
+        openProblem(r.slug);
+      } catch (e) {
+        rs.textContent = '失败：' + e.message;
+        rp.disabled = false;
+      }
+    });
   } catch (e) { c.innerHTML = '<div class="err">加载失败：' + esc(e.message) + '</div>'; }
 }
 
@@ -343,18 +461,39 @@ $('detail-back').addEventListener('click', () => {
 
 /* ---------- init ---------- */
 (async function init() {
-  try {
-    const stats = await api('/api/stats');
-    const sel = $('p-tag');
-    (stats.tags || []).forEach(t => { const o = document.createElement('option'); o.value = t; o.textContent = t; sel.appendChild(o); });
-  } catch (e) { /* stats optional */ }
+  await loadTags();
   $('p-search-btn').addEventListener('click', () => { pPage = 1; loadProblems(); });
   $('p-search').addEventListener('keydown', e => { if (e.key === 'Enter') { pPage = 1; loadProblems(); } });
   $('p-difficulty').addEventListener('change', () => { pPage = 1; loadProblems(); });
   $('p-tag').addEventListener('change', () => { pPage = 1; loadProblems(); });
   $('p-go').addEventListener('change', () => { pPage = 1; loadProblems(); });
+  $('p-order-by').addEventListener('change', () => { pPage = 1; loadProblems(); });
+  $('p-order').addEventListener('change', () => { pPage = 1; loadProblems(); });
   $('g-search-btn').addEventListener('click', () => { gPage = 1; loadGoCode(); });
   $('g-search').addEventListener('keydown', e => { if (e.key === 'Enter') { gPage = 1; loadGoCode(); } });
+
+  // pull: toggle panel
+  $('p-pull-toggle').addEventListener('click', () => {
+    const panel = $('pull-panel');
+    panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+  });
+  $('pull-start').addEventListener('click', doPull);
+  // pull a single problem by slug/URL from the toolbar
+  $('p-pull-one').addEventListener('click', async () => {
+    const v = $('p-pull-slug').value.trim();
+    if (!v) return;
+    const btn = $('p-pull-one');
+    const old = btn.textContent; btn.disabled = true; btn.textContent = '…';
+    try {
+      const r = await pullOne(v);
+      openProblem(r.slug);
+    } catch (e) {
+      alert('拉取失败：' + e.message);
+      btn.textContent = old; btn.disabled = false;
+    }
+  });
+  $('p-pull-slug').addEventListener('keydown', e => { if (e.key === 'Enter') $('p-pull-one').click(); });
+
   loadProblems();
 })();
 </script>

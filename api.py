@@ -17,19 +17,25 @@ Endpoints
   GET /api/go-code                       list generated Go code (search + paginate)
   GET /api/go-code/{task_name}           full Go code (metadata + source)
   GET /api/go-code/{task_name}/raw       raw .go file (FileResponse)
+  POST /api/problems/pull                pull NEW problems from LeetCode (bulk)
+  POST /api/problems/{identifier}/pull   pull a single problem by slug/URL
 
 Run
 ---
   uvicorn api:app --reload --port 8000
 
-The service is read-only: it serves what the workflow has already produced.
+The list/detail endpoints are read-only. The POST /api/problems/pull endpoints
+fetch from LeetCode and persist results under output/problems (skipping already
+cached slugs so the local set is only ever grown, never clobbered).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -37,15 +43,21 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Reuse the existing, dependency-light loaders from problems.py
 # (problems.py only imports `logger`, so no heavy ML deps are pulled in).
 from problems import (
     DEFAULT_OUTPUT_DIR,
+    fetch_live_problem,
+    fetch_problem_detail,
+    fetch_problem_list,
     find_local_problem,
     list_local_problems,
     load_problem_file,
+    save_index,
+    save_index_json,
+    save_problem,
 )
 
 # --------------------------------------------------------------------------- #
@@ -153,6 +165,49 @@ class PaginatedGoCode(BaseModel):
     items: list[GoCodeSummary]
 
 
+class PullQuery(BaseModel):
+    """Request body for POST /api/problems/pull (bulk pull of new problems)."""
+    limit: int = Field(50, ge=1, le=2000, description="Max problems to consider from LeetCode.")
+    category: str = ""
+    difficulty: str | None = Field(None, description="Filter by difficulty (Easy/Medium/Hard).")
+    tags: list[str] | None = Field(None, description="Filter by topic tag slugs.")
+    fetch_details: bool = True
+    save_markdown: bool = True
+    delay: float = Field(0.2, ge=0.0, description="Seconds between detail requests (be polite).")
+    force: bool = Field(False, description="Re-fetch problems that are already cached locally.")
+
+
+class PullOneResult(BaseModel):
+    slug: str
+    title: str
+    difficulty: str
+    file: str
+    status: str  # "created" | "updated"
+    error: str | None = None
+
+
+class BulkPullResponse(BaseModel):
+    pulled: int
+    skipped: int
+    errors: list[str] = []
+    slugs: list[str] = []
+    total_indexed: int
+    output_dir: str
+    index_json_path: str
+    index_path: str
+
+
+class GenerateResult(BaseModel):
+    identifier: str
+    task_name: str | None = None
+    file: str | None = None
+    build_result: str = ""
+    success: bool = False
+    category: str | None = None
+    content: str | None = None
+    error: str | None = None
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
@@ -178,6 +233,45 @@ def _load_index() -> dict:
         except Exception:
             pass
     return {"problems": list_local_problems(PROBLEMS_DIR)}
+
+
+_DIFFICULTY_RANK = {"unknown": 0, "easy": 1, "medium": 2, "hard": 3}
+
+
+def _sort_key_for(problem: dict, order_by: str):
+    """Return a comparable sort key for a problem summary under ``order_by``."""
+    if order_by == "difficulty":
+        return _DIFFICULTY_RANK.get((problem.get("difficulty") or "unknown").lower(), 99)
+    if order_by == "id":
+        # Natural numeric ordering when the id is numeric, else fall back to string.
+        s = str(problem.get("id", "") or "")
+        return (0, int(s)) if s.isdigit() else (1, s)
+    # title / slug: case-insensitive text
+    return str(problem.get(order_by, "") or "").lower()
+
+
+def _sort_problems(problems: list[dict], order_by: str, order: str) -> list[dict]:
+    """Return ``problems`` sorted by ``order_by`` (asc/desc)."""
+    reverse = order == "desc"
+    return sorted(problems, key=lambda p: _sort_key_for(p, order_by), reverse=reverse)
+
+
+def _rebuild_index() -> int:
+    """Rescan every local problem JSON and rewrite the index files.
+
+    Returns the number of problems indexed. We rebuild from disk (rather than
+    trusting the existing index) so a partial pull never loses cached problems.
+    """
+    records: list[dict] = []
+    for f in sorted(PROBLEMS_DIR.glob("*.json")):
+        if f.name == "problems_index.json":
+            continue
+        rec = load_problem_file(f)
+        if rec:
+            records.append(rec)
+    save_index_json(records, PROBLEMS_DIR)
+    save_index(records, PROBLEMS_DIR)
+    return len(records)
 
 
 def _norm_key(name: str) -> str:
@@ -217,6 +311,19 @@ def _go_code_dir_for_problem(slug: str, go_map: dict | None = None) -> Path | No
     """Find the go-code folder for a problem slug (separator-insensitive)."""
     m = go_map if go_map is not None else _go_code_norm_map()
     return m.get(_norm_key(slug))
+
+
+def _resolve_go_code_folder(task_name: str) -> Path | None:
+    """Resolve a go-code task folder, tolerating dash/underscore name drift.
+
+    Tries the literal folder name first (fast, exact), then falls back to a
+    separator-insensitive lookup so that ``two_sum`` and ``two-sum`` resolve to
+    the same task directory regardless of how the pipeline named it.
+    """
+    literal = GO_CODE_DIR / task_name
+    if literal.is_dir():
+        return literal
+    return _go_code_norm_map().get(_norm_key(task_name))
 
 
 def _go_code_summary(go_path: Path, problem_map: dict | None = None) -> GoCodeSummary:
@@ -265,6 +372,8 @@ def health():
             "/api/go-code",
             "/api/go-code/{task_name}",
             "/api/go-code/{task_name}/raw",
+            "/api/problems/pull",
+            "/api/problems/{identifier}/pull",
             "/ui/",
             "/docs",
         ],
@@ -300,9 +409,15 @@ def list_problems(
     tag: str | None = Query(None, description="Filter by topic tag (case-insensitive)"),
     paid: bool | None = Query(None, description="Filter by paid-only status"),
     search: str | None = Query(None, description="Substring match on title (case-insensitive)"),
+    order_by: str = Query("id", description="Sort field: id, title, slug, or difficulty."),
+    order: str = Query("asc", description="Sort direction: asc or desc."),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
+    if order_by not in ("id", "title", "slug", "difficulty"):
+        order_by = "id"
+    order = order if order in ("asc", "desc") else "asc"
+
     problems = list_local_problems(PROBLEMS_DIR)
 
     if difficulty:
@@ -320,6 +435,8 @@ def list_problems(
     if search:
         s = search.lower()
         problems = [p for p in problems if s in (p.get("title") or "").lower()]
+
+    problems = _sort_problems(problems, order_by, order)
 
     total = len(problems)
     page = problems[offset: offset + limit]
@@ -371,6 +488,168 @@ def problem_go_code(identifier: str):
     return _go_code_detail(go_files[0])
 
 
+# --------------------------------------------------------------------------- #
+# Pull endpoints (write operations that fetch from LeetCode)
+# --------------------------------------------------------------------------- #
+def _do_pull_one(identifier: str) -> PullOneResult:
+    """Fetch a single problem live from LeetCode and persist it."""
+    record = fetch_live_problem(identifier)
+    if not record:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not fetch problem from LeetCode: {identifier}",
+        )
+    slug = record.get("titleSlug", "")
+    local_json = PROBLEMS_DIR / f"{slug}.json"
+    existed = local_json.exists()
+    try:
+        save_problem(record, PROBLEMS_DIR, save_markdown=True)
+    except Exception as exc:  # pragma: no cover - filesystem dependent
+        raise HTTPException(status_code=500, detail=f"Failed to save problem {slug}: {exc}")
+    _rebuild_index()
+    return PullOneResult(
+        slug=slug,
+        title=record.get("title", ""),
+        difficulty=record.get("difficulty", "Unknown"),
+        file=str(local_json),
+        status="updated" if existed else "created",
+    )
+
+
+def _do_pull(q: PullQuery) -> BulkPullResponse:
+    """Fetch the problem list from LeetCode and save only the new ones."""
+    filters: dict = {}
+    if q.difficulty:
+        # LeetCode's QuestionListFilterInput.difficulty is an UPPERCASE enum.
+        _diff_map = {"easy": "EASY", "medium": "MEDIUM", "hard": "HARD"}
+        filters["difficulty"] = _diff_map.get(q.difficulty.lower(), q.difficulty.upper())
+    if q.tags:
+        filters["tags"] = q.tags
+
+    try:
+        listing = fetch_problem_list(
+            category=q.category,
+            filters=filters,
+            page_limit=50,
+            max_problems=q.limit,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to fetch problem list from LeetCode: {exc}",
+        )
+
+    new_slugs: list[str] = []
+    skipped = 0
+    errors: list[str] = []
+    for p in listing:
+        slug = p.get("titleSlug")
+        if not slug:
+            continue
+        local_json = PROBLEMS_DIR / f"{slug}.json"
+        if local_json.exists() and not q.force:
+            skipped += 1
+            continue
+        try:
+            detail = fetch_problem_detail(slug)
+            if not detail:
+                errors.append(slug)
+                continue
+            # Merge list-level fields the detail query does not return.
+            detail.setdefault("titleSlug", slug)
+            detail.setdefault("title", p.get("title"))
+            detail.setdefault("difficulty", p.get("difficulty"))
+            detail.setdefault("topicTags", p.get("topicTags", []))
+            detail.setdefault("questionFrontendId", p.get("frontendQuestionId"))
+            detail.setdefault("isPaidOnly", p.get("paidOnly", False))
+            save_problem(detail, PROBLEMS_DIR, save_markdown=q.save_markdown)
+            new_slugs.append(slug)
+        except Exception as exc:
+            errors.append(f"{slug}: {exc}")
+        if q.delay:
+            time.sleep(q.delay)
+
+    total_indexed = _rebuild_index()
+    return BulkPullResponse(
+        pulled=len(new_slugs),
+        skipped=skipped,
+        errors=errors,
+        slugs=new_slugs,
+        total_indexed=total_indexed,
+        output_dir=str(PROBLEMS_DIR),
+        index_json_path=str(PROBLEMS_DIR / "problems_index.json"),
+        index_path=str(PROBLEMS_DIR / "README.md"),
+    )
+
+
+@app.post("/api/problems/pull", response_model=BulkPullResponse, tags=["problems"])
+async def pull_problems(q: PullQuery):
+    """Pull new problems from LeetCode (skips already-cached slugs, rebuilds index)."""
+    return await asyncio.to_thread(_do_pull, q)
+
+
+@app.post("/api/problems/{identifier}/pull", response_model=PullOneResult, tags=["problems"])
+async def pull_one_problem(identifier: str):
+    """Pull a single problem from LeetCode by slug or URL."""
+    return await asyncio.to_thread(_do_pull_one, identifier)
+
+
+def _do_generate(identifier: str) -> GenerateResult:
+    """Run the code-engine workflow to generate Go code for a problem.
+
+    Reuses ``main.generate_for_problem`` (which wraps the LangGraph pipeline) so
+    the CLI and the API share the same code path. Heavy deps (langgraph,
+    langchain-ollama, pyyaml) are imported lazily so the rest of the API stays
+    importable even if they are missing.
+    """
+    try:
+        from main import generate_for_problem
+    except Exception as exc:  # pragma: no cover - import guard
+        raise HTTPException(
+            status_code=503, detail=f"Generation unavailable (missing deps): {exc}"
+        )
+
+    try:
+        res = generate_for_problem(identifier, problems_dir=str(PROBLEMS_DIR), live=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    code_path = res.get("code_path") or ""
+    build_result = res.get("build_result") or ""
+    success = "static analysis passed, compilation successful" in build_result
+
+    content = None
+    if code_path and Path(code_path).exists():
+        try:
+            content = Path(code_path).read_text(encoding="utf-8")
+        except Exception:
+            content = None
+
+    return GenerateResult(
+        identifier=identifier,
+        task_name=res.get("task_dir"),
+        file=code_path or None,
+        build_result=build_result,
+        success=success,
+        category=res.get("category"),
+        content=content,
+    )
+
+
+@app.post(
+    "/api/problems/{identifier}/generate",
+    response_model=GenerateResult,
+    tags=["problems"],
+)
+async def generate_problem_code(identifier: str):
+    """Generate Go code for a problem by running the code-engine workflow.
+
+    Resolves the problem from the local cache (no live LeetCode fetch), then runs
+    the intent→summarize→generate→compile(+fix) pipeline and returns the result.
+    """
+    return await asyncio.to_thread(_do_generate, identifier)
+
+
 @app.get("/api/go-code", response_model=PaginatedGoCode, tags=["go-code"])
 def list_go_code(
     search: str | None = Query(
@@ -401,8 +680,8 @@ def list_go_code(
 
 @app.get("/api/go-code/{task_name}", response_model=GoCodeDetail, tags=["go-code"])
 def get_go_code(task_name: str):
-    folder = GO_CODE_DIR / task_name
-    if not folder.is_dir():
+    folder = _resolve_go_code_folder(task_name)
+    if folder is None:
         raise HTTPException(status_code=404, detail=f"Go code task not found: {task_name}")
     go_files = sorted(folder.glob("*.go"))
     if not go_files:
@@ -412,8 +691,8 @@ def get_go_code(task_name: str):
 
 @app.get("/api/go-code/{task_name}/raw", tags=["go-code"])
 def get_go_code_raw(task_name: str):
-    folder = GO_CODE_DIR / task_name
-    if not folder.is_dir():
+    folder = _resolve_go_code_folder(task_name)
+    if folder is None:
         raise HTTPException(status_code=404, detail=f"Go code task not found: {task_name}")
     go_files = sorted(folder.glob("*.go"))
     if not go_files:
