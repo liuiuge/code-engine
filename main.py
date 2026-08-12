@@ -44,7 +44,7 @@ def _print_problem_list(output_dir: str) -> None:
                     f"({p.get('difficulty')}, {p.get('slug')}) tags: {tags}")
 
 
-def build_input_question(args: argparse.Namespace) -> str:
+def build_input_question(args: argparse.Namespace) -> tuple[str, str | None]:
     """
     Resolve the workflow input from flexible sources:
 
@@ -54,7 +54,9 @@ def build_input_question(args: argparse.Namespace) -> str:
       - ``--custom``  : an arbitrary problem/question string.
       - (none)        : the built-in default example problem.
 
-    The resolved value is the ``input_question`` string fed to the workflow.
+    Returns ``(input_question, difficulty)``. ``difficulty`` is the LeetCode
+    difficulty ("Easy"/"Medium"/"Hard"/"Unknown") when a problem record is
+    resolved, otherwise ``None`` — it drives the coder's Hard-problem escalation.
     """
     if args.problem:
         logger.info(f">>> resolving LeetCode problem: {args.problem}")
@@ -66,19 +68,19 @@ def build_input_question(args: argparse.Namespace) -> str:
                 f"[main] could not resolve problem '{args.problem}'. "
                 f"Cache it with `python problems.py` or allow live fetch (drop --no-live)."
             )
-        return problem_to_input(record)
+        return problem_to_input(record), record.get("difficulty")
 
     if args.file:
         logger.info(f">>> loading problem file: {args.file}")
         rec = load_problem_file(Path(args.file))
         if not rec:
             raise SystemExit(f"[main] could not read problem file: {args.file}")
-        return problem_to_input(rec)
+        return problem_to_input(rec), rec.get("difficulty")
 
     if args.custom is not None:
-        return args.custom
+        return args.custom, None
 
-    return DEFAULT_QUESTION
+    return DEFAULT_QUESTION, None
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -122,10 +124,11 @@ if __name__ == "__main__":
         raise SystemExit(0)
 
     logger.info(">>> start workflow...")
-    input_question = build_input_question(args)
+    input_question, difficulty = build_input_question(args)
 
+    logger.info(f">>> difficulty: {difficulty}")
     logger.info(f"\n[system log] input question:\n{input_question}")
-    result = app.invoke({"input_question": input_question})
+    result = app.invoke({"input_question": input_question, "difficulty": difficulty})
 
     logger.info("\n--- final output ---")
     if result.get("category") == "coding":

@@ -44,7 +44,8 @@ code-engine/
 ├── nodes.py                 # Node logic (classify / generate / execute / fix)
 ├── state.py                 # AgentState definition (TypedDict)
 ├── constants.py             # Constants: state keys, node names, categories, prompt keys
-├── config.py                # LLM init, prompt loading, model & path configuration
+├── config.py                # Prompt loading + path config; loads the model registry from models.yaml
+├── models.yaml              # Model registry: per-model params (model tag, base_url, thinking toggle, ...)
 ├── logger.py                # Logging and node-tracing decorators
 ├── problems.py              # LeetCode problem-set enrichment (GraphQL -> Markdown)
 ├── prompts/                 # Prompts for each node (Markdown)
@@ -70,7 +71,7 @@ code-engine/
 - **Python** >= 3.10
 - **Go** toolchain (the `go` command must be available, used for `go fmt` / `go build` compile checks)
 - **Ollama**: running locally, listening on `http://127.0.0.1:11434`
-  - Default model: `minimax-m3:cloud` (see `config.py`)
+  - Default model: `minimax-m3:cloud` (configured in `models.yaml`)
   - Alternative local model: `reecdev/qwen3.5-lowvram:9b`
 
 ---
@@ -79,7 +80,8 @@ code-engine/
 
 ```bash
 # 1. Install Python dependencies
-pip install langgraph langchain-ollama
+pip install -r requirements.txt
+#    (or manually: pip install langgraph langchain-ollama pyyaml)
 
 # 2. Install and start Ollama, then pull the required model
 ollama pull minimax-m3:cloud
@@ -94,16 +96,88 @@ go version
 
 ## ⚙️ Configuration
 
-Main configuration lives in `config.py`:
+Model configuration lives in **`models.yaml`** (separated from `config.py` so each
+model can carry its own invocation parameters). `config.py` loads it on import and
+builds one `ChatOllama` instance per model.
 
-| Option | Description |
+```yaml
+default: minimax          # which model `config.llm` uses
+timeout: 300              # global wall-clock cap (s) per model call; per-model override below
+
+models:
+  local:                  # local model: reasoning OFF -> lower latency
+    model: reecdev/qwen3.5-lowvram:9b
+    thinking: false
+    timeout: 300          # abort & escalate if a single call exceeds 5 min
+  minimax:                # online model: reasoning ON  -> higher accuracy
+    model: minimax-m3:cloud
+    thinking: true
+    timeout: 300
+```
+
+| Key in `models.yaml` | Meaning |
 | --- | --- |
-| `model_local` / `model_minimax` | Available model names |
-| `llm` | A `ChatOllama` instance; `model` selects the model actually used, `temperature=0.1` keeps output stable |
-| `BASE_DIR` | Project root directory, used to locate `prompts/` and `output/` |
-| `PROMPTS` | Dictionary of prompts loaded from `prompts/` |
+| `type` | `local` or `online` (semantics only) |
+| `provider` | Currently only `ollama` is supported |
+| `model` | Ollama model tag |
+| `base_url` | Ollama endpoint (default `http://127.0.0.1:11434`) |
+| `temperature` / `top_p` | Sampling params passed to `ChatOllama` |
+| `thinking` | Reasoning toggle — `false` for local (speed), `true` for online (accuracy). Mapped to langchain-ollama's `reasoning` field (or `thinking` on older versions) |
+| `timeout` | Wall-clock cap (seconds) for a single model call. On timeout, escalatable roles retry on `escalate_to` instead of hanging. Defaults to the top-level `timeout:` (300s). |
+| `extra_params` | Extra Ollama options forwarded as `model_kwargs` (`num_ctx`, `repeat_penalty`, `stop`, ...) |
 
-> To switch models, just change the `model` argument in `llm = ChatOllama(model=..., ...)`.
+`config.py` exposes:
+
+| Symbol | Description |
+| --- | --- |
+| `llm` | The default model's `ChatOllama` instance (used by all nodes) |
+| `MODELS` | `dict` mapping model name → `ChatOllama` |
+| `get_llm(name=None)` | Returns a specific model's instance, or the default |
+| `available_models()` | List of model names defined in `models.yaml` |
+| `BASE_DIR` / `PROMPTS` | Project root and the loaded prompt dictionary |
+
+> To switch the active model, change `default:` in `models.yaml` (e.g. to `local`).
+> To route a specific node to a different model, call `get_llm("local")` inside that node.
+
+### Per-node model routing
+
+`models.yaml` also has a `routing` section that balances local vs online usage
+across the workflow, so cheap/low-risk steps don't burn online quota:
+
+```yaml
+routing:
+  roles:
+    intent_classifier: local     # rarely wrong -> always local
+    task_summarizer: local       # rarely wrong -> always local
+    code_generator: local        # start local; escalate on failure
+    code_fixer: local            # start local; escalate on failure
+    general_assistant: local      # flip to 'minimax' for online-quality answers
+  escalate_after_retries: 1      # after 1 failed build, coder/fixer go online
+  escalate_to: minimax
+  escalate_roles: [code_generator, code_fixer]
+  hard_escalate_roles: [code_generator, code_fixer]  # LeetCode "Hard" -> online immediately
+```
+
+How it behaves:
+
+- **intent_classifier / task_summarizer** → always the **local** model.
+- **code_generator / code_fixer** → **local** on the first attempt (easy problems
+  solved fast/cheap). Once the local model has failed `escalate_after_retries`
+  build attempts — or the problem is a LeetCode **"Hard"** one (difficulty is
+  threaded into the workflow from the resolved problem record) — the coder/fixer
+  escalate to the **online** model (`escalate_to`) for the remaining attempts.
+  This means a hard problem the local model can't crack within its VRAM/capability
+  limits automatically gets online help, and hard problems skip the slow local
+  attempt entirely.
+- **Every model call** is capped by its `timeout` (default 5 min). If the **local**
+  model blows the budget, escalatable roles automatically retry on the **online**
+  model rather than hanging the whole workflow (the production log once showed a
+  local call running ~13 minutes — this guard prevents that).
+
+`config.invoke_model(role, prompt, retry_count=..., difficulty=...)` is what the
+nodes call; it resolves the right model (role + retries + difficulty), enforces the
+timeout, and logs `🔀 [Model Route] <role> -> <model>` (with `retry`, `difficulty`,
+and `timeout`) at runtime so you can watch the balancing happen.
 
 ---
 
@@ -230,5 +304,5 @@ input_question = problem_to_input(record)
 
 - Currently only **Go** code generation and compile checking are supported (the regex and commands in `code_executor_node` are Go-specific).
 - Intent classification relies on the prompt instructing the model to output only the words `coding` / `general`, so it places some demand on the model's instruction-following ability.
-- The project does not yet ship a `requirements.txt`; install dependencies manually as described in "Installation" (adding one is recommended).
+- The project ships a `requirements.txt`; install it with `pip install -r requirements.txt`.
 - `output/` and `__pycache__/` are already ignored in `.gitignore`.

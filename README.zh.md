@@ -44,7 +44,8 @@ code-engine/
 ├── nodes.py                 # 各节点逻辑（分类 / 生成 / 执行 / 修复）
 ├── state.py                 # AgentState 状态定义（TypedDict）
 ├── constants.py             # 状态键、节点名、分类、提示词键等常量
-├── config.py                # LLM 初始化、提示词加载、模型与路径配置
+├── config.py                # 提示词加载与路径配置；从 models.yaml 加载模型注册表
+├── models.yaml              # 模型注册表：各模型的独立参数（模型名、base_url、thinking 开关等）
 ├── logger.py                # 日志与节点追踪装饰器
 ├── problems.py              # LeetCode 题库富化（GraphQL -> Markdown）
 ├── prompts/                 # 各节点的提示词（Markdown）
@@ -70,7 +71,7 @@ code-engine/
 - **Python** >= 3.10
 - **Go** 工具链（需 `go` 命令可用，用于 `go fmt` / `go build` 编译检查）
 - **Ollama**：本地运行，监听 `http://127.0.0.1:11434`
-  - 默认模型：`minimax-m3:cloud`（见 `config.py`）
+  - 默认模型：`minimax-m3:cloud`（配置于 `models.yaml`）
   - 备选本地模型：`reecdev/qwen3.5-lowvram:9b`
 
 ---
@@ -79,7 +80,8 @@ code-engine/
 
 ```bash
 # 1. 安装 Python 依赖
-pip install langgraph langchain-ollama
+pip install -r requirements.txt
+#    （或手动安装：pip install langgraph langchain-ollama pyyaml）
 
 # 2. 安装并启动 Ollama，拉取所需模型
 ollama pull minimax-m3:cloud
@@ -94,16 +96,80 @@ go version
 
 ## ⚙️ 配置
 
-主要配置位于 `config.py`：
+模型配置独立存放在 **`models.yaml`** 中（与 `config.py` 解耦，使每个模型可携带各自的调用参数）。`config.py` 在导入时读取它，并为每个模型构建一个 `ChatOllama` 实例。
 
-| 配置项 | 说明 |
+```yaml
+default: minimax          # `config.llm` 使用的模型
+timeout: 300              # 单次模型调用的全局超时（秒），各模型可用 timeout 覆盖
+
+models:
+  local:                  # 本地模型：关闭推理（thinking=false）以降低延迟
+    model: reecdev/qwen3.5-lowvram:9b
+    thinking: false
+    timeout: 300          # 单次调用超 5 分钟则中止并升级
+  minimax:                # 在线模型：开启推理（thinking=true）以提升准确率
+    model: minimax-m3:cloud
+    thinking: true
+    timeout: 300
+```
+
+| `models.yaml` 中的键 | 含义 |
 | --- | --- |
-| `model_local` / `model_minimax` | 可选模型名称 |
-| `llm` | `ChatOllama` 实例，`model` 决定实际使用的模型，`temperature=0.1` 保证输出稳定性 |
-| `BASE_DIR` | 项目根目录，用于定位 `prompts/` 与 `output/` |
-| `PROMPTS` | 从 `prompts/` 加载的提示词字典 |
+| `type` | `local` 或 `online`（仅用于语义说明） |
+| `provider` | 目前仅支持 `ollama` |
+| `model` | Ollama 模型标签 |
+| `base_url` | Ollama 服务地址（默认 `http://127.0.0.1:11434`） |
+| `temperature` / `top_p` | 传给 `ChatOllama` 的采样参数 |
+| `thinking` | 推理开关——本地模型设 `false`（更快），在线模型设 `true`（更准）。会映射到 langchain-ollama 的 `reasoning` 字段（旧版本为 `thinking`） |
+| `timeout` | 单次模型调用的墙钟超时（秒）。超时后，可升级的角色会自动改用 `escalate_to`，而不是一直卡住。缺省取顶层 `timeout:`（300s）。 |
+| `extra_params` | 额外 Ollama 选项，作为 `model_kwargs` 透传（`num_ctx`、`repeat_penalty`、`stop` 等） |
 
-> 切换模型只需修改 `llm = ChatOllama(model=..., ...)` 中的 `model` 参数即可。
+`config.py` 对外提供：
+
+| 符号 | 说明 |
+| --- | --- |
+| `llm` | 默认模型的 `ChatOllama` 实例（所有节点默认使用） |
+| `MODELS` | 模型名 → `ChatOllama` 的字典 |
+| `get_llm(name=None)` | 获取指定模型的实例，缺省返回默认模型 |
+| `available_models()` | `models.yaml` 中定义的模型名列表 |
+| `BASE_DIR` / `PROMPTS` | 项目根目录与已加载的提示词字典 |
+
+> 切换当前使用的模型，只需修改 `models.yaml` 中的 `default:`（例如改为 `local`）。
+> 若要让某个节点使用不同模型，可在该节点内调用 `get_llm("local")`。
+
+### 按节点的模型路由
+
+`models.yaml` 还包含一个 `routing` 段，用来在整条工作流中平衡本地/在线模型的使用，
+让便宜、低风险的步骤不占用在线额度：
+
+```yaml
+routing:
+  roles:
+    intent_classifier: local     # 很少出错 -> 始终本地
+    task_summarizer: local       # 很少出错 -> 始终本地
+    code_generator: local        # 先本地；失败再升级
+    code_fixer: local            # 先本地；失败再升级
+    general_assistant: local      # 如需在线质量可改为 'minimax'
+  escalate_after_retries: 1      # 编译失败 1 次后，coder/fixer 转在线
+  escalate_to: minimax
+  escalate_roles: [code_generator, code_fixer]
+  hard_escalate_roles: [code_generator, code_fixer]  # LeetCode「困难」题 -> 直接走在线
+```
+
+行为说明：
+
+- **intent_classifier / task_summarizer** → 始终使用**本地**模型。
+- **code_generator / code_fixer** → 首次尝试使用**本地**（简单题快速、省钱地解决）。当本地模型已
+  失败 `escalate_after_retries` 次编译，或题目是 LeetCode **「困难（Hard）」**（难度会随解析出的
+  题目记录一起传入工作流）时，coder/fixer 会升级到**在线**模型（`escalate_to`）继续尝试。也就是说，
+  本地模型受限于显存/能力无法解决的难题会自动获得在线帮助，而困难题会**直接跳过缓慢的本地尝试**。
+- **每次模型调用**都受各自的 `timeout`（默认 5 分钟）限制。若**本地**模型超时，可升级的角色会
+  自动改用**在线**模型重试，而不是让整条工作流卡死（生产日志里曾出现过本地调用跑到约 13 分钟的情况，
+  这个机制就是为了防止它再次发生）。
+
+节点统一调用 `config.invoke_model(role, prompt, retry_count=..., difficulty=...)`，由它解析对应模型
+（角色 + 重试次数 + 难度）、执行超时控制，并在运行时打印 `🔀 [Model Route] <role> -> <model>`
+（含 `retry`、`difficulty`、`timeout`），方便观察负载均衡过程。
 
 ---
 
@@ -221,5 +287,5 @@ input_question = problem_to_input(record)
 
 - 当前仅支持 **Go** 代码的生成与编译校验（`code_executor_node` 中的正则与命令均为 Go 定制）。
 - 意图分类依赖提示词要求模型只输出 `coding` / `general` 两个词，对模型指令遵循能力有一定要求。
-- 项目暂未提供 `requirements.txt`，依赖请按上文「安装」手动安装（建议后续补充）。
+- 项目已提供 `requirements.txt`，可使用 `pip install -r requirements.txt` 安装依赖。
 - `output/` 与 `__pycache__/` 已在 `.gitignore` 中忽略。

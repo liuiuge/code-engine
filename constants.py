@@ -6,6 +6,7 @@ class StateKey:
     BUILD_RESULT = "build_result"
     RETRY_COUNT = "retry_count"
     TASK_DIR = "task_dir"
+    DIFFICULTY = "difficulty"
 
 class NodeName:
     INTENT_CLASSIFIER = "intent_classifier_node"

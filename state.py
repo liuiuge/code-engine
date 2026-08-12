@@ -8,3 +8,4 @@ class AgentState(TypedDict):
     build_result: str
     retry_count: int
     task_dir: str
+    difficulty: str

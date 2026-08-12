@@ -3,20 +3,20 @@ import subprocess
 import os
 from state import AgentState
 from logger import trace_node, trace_node_detailed
-from config import llm, PROMPTS, BASE_DIR
+from config import invoke_model, PROMPTS, BASE_DIR
 from constants import StateKey, Category, PromptKey, DEFAULT_TASK_NAME, BUILD_SUCCESS_MESSAGE
 
 @trace_node
 def intent_classifier_node(state: AgentState):
     prompt = PROMPTS[PromptKey.INTENT_CLASSIFIER].format(input_question=state[StateKey.INPUT_QUESTION])
-    response = llm.invoke(prompt)
+    response = invoke_model(PromptKey.INTENT_CLASSIFIER, prompt)
     category = Category.CODING if Category.CODING in response.content.lower() else Category.GENERAL
     return {StateKey.CATEGORY: category}
 
 @trace_node_detailed
 def task_summarizer_node(state: AgentState):
     prompt = PROMPTS[PromptKey.TASK_SUMMARIZER].format(input_question=state[StateKey.INPUT_QUESTION])
-    response = llm.invoke(prompt)
+    response = invoke_model(PromptKey.TASK_SUMMARIZER, prompt)
     
     slug = re.sub(r'[^a-zA-Z0-9_-]', '_', response.content.strip()).lower()
     if not slug:
@@ -27,13 +27,17 @@ def task_summarizer_node(state: AgentState):
 @trace_node_detailed
 def code_generator_node(state: AgentState):
     prompt = PROMPTS[PromptKey.CODE_GENERATOR].format(input_question=state[StateKey.INPUT_QUESTION])
-    response = llm.invoke(prompt)
+    # Pass difficulty so a LeetCode "Hard" problem escalates straight to online.
+    response = invoke_model(
+        PromptKey.CODE_GENERATOR, prompt,
+        difficulty=state.get(StateKey.DIFFICULTY),
+    )
     return {StateKey.FINAL_OUTPUT: response.content}
 
 @trace_node
 def general_assistant_node(state: AgentState):
     prompt = PROMPTS[PromptKey.GENERAL_ASSISTANT].format(input_question=state[StateKey.INPUT_QUESTION])
-    response = llm.invoke(prompt)
+    response = invoke_model(PromptKey.GENERAL_ASSISTANT, prompt)
     return {StateKey.FINAL_OUTPUT: response.content}
 
 @trace_node
@@ -69,7 +73,14 @@ def code_fixer_node(state: AgentState):
         final_output=state[StateKey.FINAL_OUTPUT],
         build_result=state[StateKey.BUILD_RESULT]
     )
-    response = llm.invoke(fix_prompt)
+    # Pass the (post-increment) retry count so escalation to the online model
+    # kicks in after `escalate_after_retries` failed builds. Also forward
+    # difficulty so a LeetCode "Hard" problem escalates on the first attempt.
+    response = invoke_model(
+        PromptKey.CODE_FIXER, fix_prompt,
+        retry_count=current_retry,
+        difficulty=state.get(StateKey.DIFFICULTY),
+    )
     return {
         StateKey.FINAL_OUTPUT: response.content, 
         StateKey.RETRY_COUNT: current_retry

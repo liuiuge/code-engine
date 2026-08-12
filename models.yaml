@@ -1,0 +1,79 @@
+# models.yaml — CodeEngine model registry
+#
+# Each model is invoked through Ollama with its own set of parameters. The key
+# difference captured here is the `thinking` (a.k.a. reasoning) toggle:
+#
+#   - type: local  -> thinking = false : skip chain-of-thought, lower latency
+#   - type: online -> thinking = true  : enable reasoning, higher accuracy
+#
+# `default` selects which model `config.llm` (the shared instance used by all
+# nodes) points at. Switch it to `local` to run fully offline / faster.
+
+default: minimax
+
+# Global wall-clock cap (seconds) for a single model call. A local model that
+# "thinks" for 13 minutes (as seen in production logs) is worse than failing
+# over to the online model — so we abort and escalate after this budget.
+# Override per-model via each model's `timeout:` key below.
+timeout: 300
+
+models:
+  # Local model: runs on your own machine, so we turn reasoning OFF to keep
+  # response latency low — important for the repeated generate/fix loops.
+  local:
+    type: local
+    provider: ollama
+    model: reecdev/qwen3.5-lowvram:9b
+    base_url: http://127.0.0.1:11434
+    temperature: 0.1
+    thinking: false
+    timeout: 300              # abort & escalate if a single call exceeds 5 min
+    extra_params: {}          # forwarded to Ollama as model_kwargs (num_ctx, repeat_penalty, stop, ...)
+
+  # Online / cloud model: accuracy matters more than speed, so we turn
+  # reasoning ON for better, more deliberate answers.
+  minimax:
+    type: online
+    provider: ollama
+    model: minimax-m3:cloud
+    base_url: http://127.0.0.1:11434
+    temperature: 0.1
+    thinking: true
+    timeout: 300
+    extra_params: {}
+
+# ---------------------------------------------------------------------------
+# Per-role routing: which model each node uses, to balance local vs online.
+#
+# Strategy (see user requirement):
+#   - intent_classifier / task_summarizer: ALWAYS local. They rarely err, so
+#     there is no reason to spend online quota / latency on them.
+#   - code_generator / code_fixer: START local. Easy problems are solved on the
+#     first try (fast, cheap). Once the local model has failed
+#     `escalate_after_retries` build attempts (i.e. it clearly can't crack the
+#     problem within VRAM / capability limits), the fixer escalates to the
+#     online model for the remaining attempts.
+# Role keys match the PromptKey names used in nodes.py.
+# ---------------------------------------------------------------------------
+routing:
+  roles:
+    intent_classifier: local
+    task_summarizer: local
+    code_generator: local
+    code_fixer: local
+    general_assistant: local      # brief answers; flip to 'minimax' if you want online quality
+
+  escalate_after_retries: 1       # after 1 failed build, switch coder/fixer to online
+  escalate_to: minimax
+  escalate_roles:
+    - code_generator
+    - code_fixer
+
+  # Preemptive escalation: when the problem is from LeetCode and is marked
+  # "Hard", the local model's VRAM / capability can't reliably crack it — so
+  # these roles route straight to the online model on the FIRST attempt
+  # (skipping the slow local attempt entirely). Difficulty comes from the
+  # resolved problem record; non-LeetCode / unknown difficulty is unaffected.
+  hard_escalate_roles:
+    - code_generator
+    - code_fixer
