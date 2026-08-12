@@ -1,10 +1,20 @@
+import argparse
+from pathlib import Path
+
 from logger import logger
 from workflow import app
+from problems import (
+    resolve_problem,
+    problem_to_input,
+    find_local_problem,
+    list_local_problems,
+    load_problem_file,
+    DEFAULT_OUTPUT_DIR,
+)
 
 
-if __name__ == "__main__":
-    logger.info(">>> start workflow...")
-    input_question = """
+# Default example problem, kept for backward compatibility.
+DEFAULT_QUESTION = """
 使用Golang 完成题目
 ## 题目描述
 
@@ -19,13 +29,107 @@ if __name__ == "__main__":
 输出：[1,2,3,null,null,4,5]
 
 ```
+"""
+
+
+def _print_problem_list(output_dir: str) -> None:
+    problems = list_local_problems(output_dir)
+    if not problems:
+        logger.info("[main] no cached problems found. Run `python problems.py` first.")
+        return
+    logger.info(f"[main] {len(problems)} cached problem(s) in {output_dir}:")
+    for p in problems:
+        tags = ", ".join(p.get("tags") or [])
+        logger.info(f"  - [{p.get('id', '?')}] {p.get('title')} "
+                    f"({p.get('difficulty')}, {p.get('slug')}) tags: {tags}")
+
+
+def build_input_question(args: argparse.Namespace) -> str:
     """
+    Resolve the workflow input from flexible sources:
+
+      - ``--problem`` : a LeetCode problem (slug / ID / title / URL) — resolved
+                        from the local cache first, then fetched live if needed.
+      - ``--file``    : a saved problem file (``.json`` or ``.md``).
+      - ``--custom``  : an arbitrary problem/question string.
+      - (none)        : the built-in default example problem.
+
+    The resolved value is the ``input_question`` string fed to the workflow.
+    """
+    if args.problem:
+        logger.info(f">>> resolving LeetCode problem: {args.problem}")
+        record = resolve_problem(
+            args.problem, output_dir=args.problems_dir, live=not args.no_live
+        )
+        if not record:
+            raise SystemExit(
+                f"[main] could not resolve problem '{args.problem}'. "
+                f"Cache it with `python problems.py` or allow live fetch (drop --no-live)."
+            )
+        return problem_to_input(record)
+
+    if args.file:
+        logger.info(f">>> loading problem file: {args.file}")
+        rec = load_problem_file(Path(args.file))
+        if not rec:
+            raise SystemExit(f"[main] could not read problem file: {args.file}")
+        return problem_to_input(rec)
+
+    if args.custom is not None:
+        return args.custom
+
+    return DEFAULT_QUESTION
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="CodeEngine: generate & compile Go code for a problem."
+    )
+    src = parser.add_mutually_exclusive_group()
+    src.add_argument(
+        "--problem", "-p",
+        help="LeetCode problem reference: slug, ID, title, or URL "
+             "(resolved from local cache, then fetched live if needed).",
+    )
+    src.add_argument(
+        "--file", "-f",
+        help="Path to a saved problem file (.json or .md).",
+    )
+    src.add_argument(
+        "--custom", "-c",
+        help="A custom problem/question string.",
+    )
+    parser.add_argument(
+        "--problems-dir", default=str(DEFAULT_OUTPUT_DIR),
+        help="Where local problems are cached (default: output/problems).",
+    )
+    parser.add_argument(
+        "--no-live", action="store_true",
+        help="Do not fetch from LeetCode if the problem is not found locally.",
+    )
+    parser.add_argument(
+        "--list-problems", action="store_true",
+        help="List cached problems and exit.",
+    )
+    return parser
+
+
+if __name__ == "__main__":
+    args = _build_arg_parser().parse_args()
+
+    if args.list_problems:
+        _print_problem_list(args.problems_dir)
+        raise SystemExit(0)
+
+    logger.info(">>> start workflow...")
+    input_question = build_input_question(args)
+
     logger.info(f"\n[system log] input question:\n{input_question}")
     result = app.invoke({"input_question": input_question})
-    
+
     logger.info("\n--- final output ---")
     if result.get("category") == "coding":
-        logger.info (f"save code to: {result.get('code_path')}")
+        logger.info(f"save code to: {result.get('code_path')}")
         logger.info(f"compile check result:\n{result.get('build_result')}")
     else:
         logger.info(result.get("final_output"))

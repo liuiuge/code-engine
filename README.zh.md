@@ -57,8 +57,10 @@ code-engine/
     ├── go-code/             # 生成的 Go 代码（按任务目录分文件夹）
     │   └── <task_name>/<task_name>.go
     └── problems/            # 富化后的 LeetCode 题库（见下文）
+        ├── problems_index.json  # 轻量索引，用于快速查找
         ├── README.md        # 题目索引（全部题目的表格）
-        └── <slug>.md        # 每道题一个 Markdown 文件
+        ├── <slug>.json      # 规范记录（机器可读）
+        └── <slug>.md        # 人类可读视图（可选，由 JSON 派生）
 ```
 
 ---
@@ -107,16 +109,35 @@ go version
 
 ## 💻 使用
 
-直接运行入口脚本：
+`main.py` 支持**灵活的输入**——既可以是自定义问题，也可以是从本地缓存（或在线拉取）解析出的 LeetCode 题目。
 
 ```bash
+# 内置示例题（二叉树序列化/反序列化）。
 python main.py
+
+# 通过 slug / ID / 标题 / URL 指定某道 LeetCode 题目。
+python main.py --problem two-sum
+python main.py --problem 2
+python main.py --problem "https://leetcode.com/problems/two-sum/"
+python main.py --problem "add two numbers"        # 按标题子串匹配
+
+# 从已保存的题目文件（.json 或 .md）运行。
+python main.py --file output/problems/two-sum.json
+
+# 运行任意自定义问题。
+python main.py --custom "用 Golang 实现 LRU Cache"
+
+# 列出已缓存的题目并退出。
+python main.py --list-problems
+
+# 仅从本地缓存解析，不在线拉取。
+python main.py --problem two-sum --no-live
 ```
 
-`main.py` 中内置了一个二叉树序列化/反序列化的算法题示例。如需自定义问题，修改 `main.py` 中的 `input_question` 字符串，然后运行：
+若未指定输入来源，则使用内置示例题。解析出的文本会作为 `input_question` 传入工作流：
 
 ```python
-result = app.invoke({"input_question": "你的题目或问题"})
+result = app.invoke({"input_question": input_question})
 ```
 
 运行后会通过日志输出：
@@ -143,10 +164,16 @@ result = app.invoke({"input_question": "你的题目或问题"})
 
 `problems.py` 通过查询 LeetCode 公开 GraphQL API（使用与
 [akarsh1995/leetcode-graphql-queries](https://github.com/akarsh1995/leetcode-graphql-queries)
-相同的查询语句）富化本地题库，并将结果以 Markdown 形式保存到 `output/problems/`：
+相同的查询语句）富化本地题库。每道题以**规范 JSON 记录**（`<slug>.json`）形式存储，
+它是 `main.py` 在传入 `--problem` 时工作流读取的机器可读真源；并在此基础上派生出
+人类可读的 **Markdown 视图**（`<slug>.md`）与轻量**索引**（`problems_index.json` + `README.md`）。
 
+- `output/problems/<slug>.json` — 规范记录（标题、难度、标签、链接、清洗后的题目描述、示例、提示，以及重建的 **Go 模板**）。
+- `output/problems/<slug>.md` — 同样内容渲染为 Markdown，便于浏览。
+- `output/problems/problems_index.json` — 轻量索引，用于快速查找。
 - `output/problems/README.md` — 完整题目索引（所有已抓取题目的表格）。
-- `output/problems/<slug>.md` — 每道题一个文件，包含标题、难度、标签、链接、清洗后的题目描述、示例、提示，以及根据 `metaData` **重建的 Go 模板**（LeetCode 服务端不返回 Go 代码片段，因此由题目 `metaData` 重新生成）。
+
+> Go 模板由题目的 `metaData` 重建，因为 LeetCode 服务端不会返回 Go 代码片段。
 
 该模块**零依赖**——仅使用 Python 标准库（通过 `urllib` 请求 HTTP，通过轻量正则将 HTML 转为 Markdown）。
 
@@ -164,19 +191,26 @@ python problems.py --all --delay 0.3
 
 # 只写索引，跳过每题的详情文件。
 python problems.py --no-details
+
+# 只写 JSON + 索引，跳过每题的 .md 视图。
+python problems.py --no-md
 ```
 
 ### 作为库调用
 
 ```python
-from problems import enrich_problem_set
+from problems import enrich_problem_set, resolve_problem, problem_to_input
 
 # 默认：抓取前 50 道题到 output/problems。
 summary = enrich_problem_set()
 
 # 抓取全部题目，输出到自定义目录。
 summary = enrich_problem_set(output_dir="output/problems", max_problems=None, delay=0.3)
-print(summary)  # {'output_dir': '...', 'problem_count': 4018, 'index_path': '...'}
+print(summary)  # {'output_dir': '...', 'problem_count': 4018, 'index_path': '...', 'index_json_path': '...'}
+
+# 由 LeetCode 题目（本地优先，其次在线拉取）构建工作流输入。
+record = resolve_problem("two-sum")
+input_question = problem_to_input(record)
 ```
 
 > **说明：** LeetCode 的题目列表接口是分页的，脚本会自动翻页；索引中会标记付费题目，但公开 API 不一定返回其完整描述。

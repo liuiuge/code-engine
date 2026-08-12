@@ -8,18 +8,29 @@ https://github.com/akarsh1995/leetcode-graphql-queries) to:
   2. Fetch *details* for each problem (`question` by `titleSlug`):
      title, difficulty, description (HTML), topic tags, hints, examples,
      and the official code template.
-  3. Persist everything as Markdown under ``output/problems``:
-       - ``output/problems/README.md``  -> the full problem index
-       - ``output/problems/<slug>.md``  -> one file per problem
+  3. Persist everything under ``output/problems``:
+       - ``output/problems/<slug>.json``        -> the canonical record (machine-readable)
+       - ``output/problems/<slug>.md``          -> a human-readable view (optional, derived)
+       - ``output/problems/README.md``          -> the full problem index
+       - ``output/problems/problems_index.json``-> a lightweight index for fast lookup
+
+The canonical record (JSON) is what the workflow reads when you ask ``main.py``
+to run a problem "from LeetCode" — it allows reliable lookup by slug / ID /
+title / URL and is the single source of truth that the Markdown view and the
+``input_question`` string are both derived from.
 
 No third-party dependencies are required — only the Python standard library.
 
 Quick start
 -----------
-    from problems import enrich_problem_set
+    from problems import enrich_problem_set, resolve_problem, problem_to_input
 
     # Pull the first 50 problems (default) and save them locally.
     enrich_problem_set()
+
+    # Build a workflow input from a LeetCode problem (local cache, then live).
+    record = resolve_problem("two-sum")
+    input_question = problem_to_input(record)
 
     # Or from the command line:
     #   python problems.py --limit 50
@@ -172,7 +183,7 @@ def html_to_markdown(content: str) -> str:
         # later "strip remaining tags" step cannot mistake `2 <= x` for a tag.
         # The final html.unescape() at the end resolves all entities.
         code = code.strip("\n")
-        pre_blocks.append(f"```text\n{code}\n```")
+        pre_blocks.append("```text\n" + code + "\n```")
         return f"\x00PRE{len(pre_blocks) - 1}\x00"
 
     text = re.sub(r"<pre[^>]*>.*?</pre>", _stash_pre, text, flags=re.DOTALL | re.IGNORECASE)
@@ -371,42 +382,63 @@ def _zero(go_type: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Saving
+# Normalization, rendering & saving
 # --------------------------------------------------------------------------- #
 
 def _slugify_filename(slug: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]", "_", slug).lower()
 
 
-def save_problem(problem: dict, output_dir: Path) -> Path:
-    """Write one problem to ``<output_dir>/<slug>.md`` and return the path."""
+def normalize_problem(problem: dict) -> dict:
+    """
+    Enrich a raw LeetCode problem dict into a canonical, self-contained record.
+
+    The record is the single source of truth stored as JSON. The Markdown view
+    and the workflow's ``input_question`` string are both derived from it.
+    """
     slug = problem.get("titleSlug") or _slugify_filename(problem.get("title", "problem"))
-    file_path = output_dir / f"{slug}.md"
-
-    title = problem.get("title", slug)
-    difficulty = problem.get("difficulty", "Unknown")
     qid = problem.get("questionFrontendId") or problem.get("questionId") or ""
-    tags = ", ".join(t.get("name", "") for t in problem.get("topicTags", []))
-    paid = "Yes" if problem.get("isPaidOnly") else "No"
-    url = f"https://leetcode.com/problems/{slug}/"
-    hints = problem.get("hints") or []
+    tags = problem.get("topicTags") or []
+    record = {
+        "title": problem.get("title", slug),
+        "titleSlug": slug,
+        "questionId": problem.get("questionId") or "",
+        "questionFrontendId": str(qid) if qid != "" else "",
+        "difficulty": problem.get("difficulty", "Unknown"),
+        "topicTags": [{"name": t.get("name", ""), "slug": t.get("slug", "")} for t in tags],
+        "isPaidOnly": bool(problem.get("isPaidOnly") or problem.get("paidOnly", False)),
+        "url": f"https://leetcode.com/problems/{slug}/",
+        "content_html": problem.get("content", ""),
+        "description_md": html_to_markdown(problem.get("content", "")),
+        "exampleTestcaseList": problem.get("exampleTestcaseList") or [],
+        "hints": problem.get("hints") or [],
+        "codeSnippets": problem.get("codeSnippets") or [],
+        "metaData": problem.get("metaData") or "",
+        "go_template": _go_template(problem),
+    }
+    return record
 
-    description = html_to_markdown(problem.get("content", ""))
-    go_code = _go_template(problem)
-    examples = problem.get("exampleTestcaseList") or []
+
+def render_problem_markdown(record: dict) -> str:
+    """Render a canonical record back into the human-readable Markdown view."""
+    slug = record["titleSlug"]
+    tags = ", ".join(t.get("name", "") for t in record.get("topicTags", []))
+    paid = "Yes" if record.get("isPaidOnly") else "No"
+    examples = record.get("exampleTestcaseList") or []
+    hints = record.get("hints") or []
 
     lines: list[str] = []
-    lines.append(f"# {title}")
+    lines.append(f"# {record.get('title', slug)}")
     lines.append("")
-    lines.append(f"- **ID:** {qid}")
-    lines.append(f"- **Difficulty:** {difficulty}")
+    lines.append(f"- **ID:** {record.get('questionFrontendId', '')}")
+    lines.append(f"- **Difficulty:** {record.get('difficulty', 'Unknown')}")
     lines.append(f"- **Tags:** {tags or 'N/A'}")
     lines.append(f"- **Paid only:** {paid}")
-    lines.append(f"- **Link:** {url}")
+    lines.append(f"- **Link:** {record.get('url', '')}")
     lines.append("")
     lines.append("## Description")
     lines.append("")
-    lines.append(description if description else "_No description available._")
+    lines.append(record.get("description_md") or "_No description available._")
     lines.append("")
     lines.append("## Examples")
     lines.append("")
@@ -414,7 +446,9 @@ def save_problem(problem: dict, output_dir: Path) -> Path:
         for i, ex in enumerate(examples, 1):
             lines.append(f"**Example {i}:**")
             lines.append("")
-            lines.append(f"```text\n{ex}\n```")
+            lines.append("```text")
+            lines.append(ex)
+            lines.append("```")
             lines.append("")
     else:
         lines.append("_No example test cases provided._")
@@ -428,32 +462,69 @@ def save_problem(problem: dict, output_dir: Path) -> Path:
     lines.append("## Go Template")
     lines.append("")
     lines.append("```go")
-    lines.append(go_code.rstrip("\n"))
+    lines.append((record.get("go_template") or "").rstrip("\n"))
     lines.append("```")
     lines.append("")
-
-    file_path.write_text("\n".join(lines), encoding="utf-8")
-    return file_path
+    return "\n".join(lines)
 
 
-def save_index(problems: list[dict], output_dir: Path) -> Path:
-    """Write the problem index to ``<output_dir>/README.md``."""
+def save_problem(problem: dict, output_dir: Path, save_markdown: bool = True) -> dict:
+    """
+    Persist one problem.
+
+    Canonical storage is ``<output_dir>/<slug>.json`` (machine-readable, used by
+    the workflow to resolve problems programmatically). When ``save_markdown`` is
+    True, a human-readable ``<slug>.md`` view is also written next to it.
+    Returns the canonical record.
+    """
+    record = normalize_problem(problem)
+    output_dir = Path(output_dir)
+    slug = record["titleSlug"]
+
+    json_path = output_dir / f"{slug}.json"
+    json_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if save_markdown:
+        md_path = output_dir / f"{slug}.md"
+        md_path.write_text(render_problem_markdown(record), encoding="utf-8")
+
+    return record
+
+
+def _summarize(record: dict) -> dict:
+    """Reduce a canonical record to a lightweight index entry."""
+    return {
+        "id": record.get("questionFrontendId", ""),
+        "slug": record.get("titleSlug", ""),
+        "title": record.get("title", ""),
+        "difficulty": record.get("difficulty", "Unknown"),
+        "tags": [t.get("name", "") for t in record.get("topicTags", [])],
+        "paid": bool(record.get("isPaidOnly")),
+        "file": f"{record.get('titleSlug', '')}.json",
+    }
+
+
+def save_index(records: list[dict], output_dir: Path) -> Path:
+    """Write the problem index to ``<output_dir>/README.md``.
+
+    ``records`` is a list of canonical records (or ``_summarize`` outputs).
+    """
     index_path = output_dir / "README.md"
     lines: list[str] = []
     lines.append("# LeetCode Problem Set")
     lines.append("")
-    lines.append(f"_Generated locally from LeetCode's GraphQL API. Total problems in index: **{len(problems)}**._")
+    lines.append(f"_Generated locally from LeetCode's GraphQL API. Total problems in index: **{len(records)}**._")
     lines.append("")
     lines.append("| ID | Title | Difficulty | Tags | Paid | File |")
     lines.append("|----|-------|------------|------|------|------|")
 
-    for p in problems:
-        qid = p.get("frontendQuestionId") or p.get("questionFrontendId") or p.get("questionId") or ""
-        title = p.get("title", "Unknown")
-        slug = p.get("titleSlug", "")
-        difficulty = p.get("difficulty", "Unknown")
-        tags = ", ".join(t.get("name", "") for t in p.get("topicTags", []))
-        paid = "Yes" if p.get("paidOnly") or p.get("isPaidOnly") else "No"
+    for r in records:
+        qid = r.get("id") or r.get("questionFrontendId") or ""
+        title = r.get("title", "Unknown")
+        slug = r.get("slug") or r.get("titleSlug") or ""
+        difficulty = r.get("difficulty", "Unknown")
+        tags = ", ".join(r.get("tags") or [])
+        paid = "Yes" if r.get("paid") or r.get("isPaidOnly") else "No"
         file_link = f"[{slug}.md]({slug}.md)"
         title_link = f"[{title}](https://leetcode.com/problems/{slug}/)"
         # Escape pipes inside markdown table cells.
@@ -463,6 +534,226 @@ def save_index(problems: list[dict], output_dir: Path) -> Path:
     lines.append("")
     index_path.write_text("\n".join(lines), encoding="utf-8")
     return index_path
+
+
+def save_index_json(records: list[dict], output_dir: Path) -> Path:
+    """Write a lightweight master index (``problems_index.json``) for fast lookup."""
+    index_path = output_dir / "problems_index.json"
+    payload = {
+        "count": len(records),
+        "problems": [_summarize(r) for r in records],
+    }
+    index_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return index_path
+
+
+# --------------------------------------------------------------------------- #
+# Resolution & workflow input
+# --------------------------------------------------------------------------- #
+
+def _normalize_query(query: str) -> dict:
+    """Parse a user query into structured lookup hints."""
+    q = (query or "").strip()
+    info = {"raw": q, "slug": None, "id": None, "title": None, "url": None}
+    if not q:
+        return info
+    m = re.search(r"leetcode\.com/problems/([^/?#]+)", q, re.IGNORECASE)
+    if m:
+        info["slug"] = m.group(1).lower()
+        info["url"] = q
+        return info
+    if q.isdigit():
+        info["id"] = q
+        return info
+    # Treat as a slug candidate (allow spaces -> dashes) or a free title.
+    slug_candidate = q.lower().replace(" ", "-")
+    info["slug"] = slug_candidate
+    info["title"] = q
+    return info
+
+
+def load_problem_file(path) -> dict | None:
+    """Load a canonical record from a ``.json`` or ``.md`` problem file."""
+    path = Path(path)
+    if not path.exists():
+        return None
+    if path.suffix == ".json":
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+    if path.suffix == ".md":
+        text = path.read_text(encoding="utf-8")
+        slug = path.stem
+        title = slug
+        m = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
+        if m:
+            title = m.group(1).strip()
+        return {
+            "title": title,
+            "titleSlug": slug,
+            "questionFrontendId": "",
+            "difficulty": "Unknown",
+            "topicTags": [],
+            "isPaidOnly": False,
+            "url": f"https://leetcode.com/problems/{slug}/",
+            "content_html": text,
+            "description_md": text,
+            "exampleTestcaseList": [],
+            "hints": [],
+            "codeSnippets": [],
+            "metaData": "",
+            "go_template": "",
+        }
+    return None
+
+
+def find_local_problem(query: str, output_dir: str | Path = DEFAULT_OUTPUT_DIR) -> dict | None:
+    """
+    Resolve a problem from the local cache (no network).
+
+    Accepts a slug, frontend ID, title (exact or substring), or a LeetCode URL.
+    Looks up ``problems_index.json`` first, then falls back to scanning
+    ``.json`` / ``.md`` files in ``output_dir``.
+    """
+    output_dir = Path(output_dir)
+    if not output_dir.exists():
+        return None
+    info = _normalize_query(query)
+    slug = info["slug"]
+    qid = info["id"]
+    title = info["title"]
+
+    candidates: list[Path] = []
+    index_path = output_dir / "problems_index.json"
+    if index_path.exists():
+        try:
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            index = {}
+        for entry in index.get("problems", []):
+            eslug = (entry.get("slug") or "").lower()
+            eid = str(entry.get("id") or "")
+            etitle = (entry.get("title") or "").lower()
+            if slug and eslug == slug.lower():
+                candidates.append(output_dir / entry.get("file", f"{eslug}.json"))
+            elif qid and eid == qid:
+                candidates.append(output_dir / entry.get("file", f"{eslug}.json"))
+            elif title and etitle and title.lower() in etitle:
+                candidates.append(output_dir / entry.get("file", f"{eslug}.json"))
+    else:
+        for f in sorted(output_dir.glob("*")):
+            if f.suffix in (".json", ".md"):
+                candidates.append(f)
+
+    seen: set = set()
+    for cand in candidates:
+        if not cand.exists() or cand in seen:
+            continue
+        seen.add(cand)
+        rec = load_problem_file(cand)
+        if not rec:
+            continue
+        rslug = (rec.get("titleSlug") or "").lower()
+        rid = str(rec.get("questionFrontendId") or "")
+        rtitle = (rec.get("title") or "").lower()
+        if slug and rslug == slug.lower():
+            return rec
+        if qid and rid == qid:
+            return rec
+        if title and title.lower() in rtitle:
+            return rec
+    return None
+
+
+def fetch_live_problem(query: str) -> dict | None:
+    """Fetch a single problem live from LeetCode by slug/URL and return its record."""
+    info = _normalize_query(query)
+    slug = info["slug"]
+    if not slug:
+        return None
+    try:
+        detail = fetch_problem_detail(slug)
+    except Exception as exc:  # pragma: no cover - network dependent
+        logger.warning(f"[problems] live fetch failed for '{query}': {exc}")
+        return None
+    if not detail:
+        return None
+    detail.setdefault("titleSlug", slug)
+    return normalize_problem(detail)
+
+
+def resolve_problem(query: str, output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+                    live: bool = True) -> dict | None:
+    """Resolve a problem locally first; optionally fall back to a live fetch."""
+    local = find_local_problem(query, output_dir=output_dir)
+    if local:
+        return local
+    if live:
+        return fetch_live_problem(query)
+    return None
+
+
+def list_local_problems(output_dir: str | Path = DEFAULT_OUTPUT_DIR) -> list[dict]:
+    """Return the list of locally cached problem summaries."""
+    output_dir = Path(output_dir)
+    index_path = output_dir / "problems_index.json"
+    if index_path.exists():
+        try:
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            return index.get("problems", [])
+        except (json.JSONDecodeError, OSError):
+            pass
+    # Fallback: scan both .json and .md (covers legacy Markdown-only caches).
+    out: list[dict] = []
+    seen: set = set()
+    for f in sorted(output_dir.glob("*")):
+        if f.suffix not in (".json", ".md") or f.name in ("README.md", "problems_index.json"):
+            continue
+        rec = load_problem_file(f)
+        if not rec:
+            continue
+        key = rec.get("titleSlug")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(_summarize(rec))
+    return out
+
+
+def problem_to_input(problem: dict) -> str:
+    """
+    Build the ``input_question`` string consumed by the workflow from a problem
+    record. The result is plain Markdown text the code generator can read.
+    """
+    description = problem.get("description_md") or problem.get("content_html") or ""
+    examples = problem.get("exampleTestcaseList") or []
+    go_template = problem.get("go_template") or ""
+
+    lines: list[str] = []
+    lines.append("使用Golang 完成题目")
+    lines.append("## 题目描述")
+    lines.append("")
+    lines.append(description.strip() if description else "_No description available._")
+    lines.append("")
+    if examples:
+        lines.append("## 示例")
+        lines.append("")
+        for i, ex in enumerate(examples, 1):
+            lines.append(f"**Example {i}:**")
+            lines.append("")
+            lines.append("```text")
+            lines.append(ex)
+            lines.append("```")
+            lines.append("")
+    if go_template:
+        lines.append("## Go 模板")
+        lines.append("")
+        lines.append("```go")
+        lines.append(go_template.rstrip("\n"))
+        lines.append("```")
+        lines.append("")
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #
@@ -475,18 +766,20 @@ def enrich_problem_set(output_dir: str | Path = DEFAULT_OUTPUT_DIR,
                        page_limit: int = 50,
                        max_problems: int | None = None,
                        fetch_details: bool = True,
-                       delay: float = 0.2) -> dict:
+                       delay: float = 0.2,
+                       save_markdown: bool = True) -> dict:
     """
     Enrich the local problem set and persist it under ``output_dir``.
 
     Args:
-        output_dir:    Where to write ``README.md`` + ``<slug>.md`` files.
+        output_dir:    Where to write ``<slug>.json`` (+ optional ``.md``) files.
         category:      LeetCode category slug (e.g. ``"algorithms"``); ``""`` = all.
         filters:       ``QuestionListFilterInput`` filter dict (difficulty, tags, etc.).
         page_limit:    Problems fetched per GraphQL page.
         max_problems:  Stop after this many problems (``None`` = all available).
-        fetch_details: If True, fetch & save a Markdown file per problem.
+        fetch_details: If True, fetch & save a record per problem.
         delay:         Seconds to sleep between detail requests (be polite).
+        save_markdown: If True, also write a human-readable ``.md`` per problem.
 
     Returns:
         A summary dict with counts and the output directory.
@@ -500,6 +793,7 @@ def enrich_problem_set(output_dir: str | Path = DEFAULT_OUTPUT_DIR,
     )
     logger.info(f"[problems] list complete: {len(problems)} problems")
 
+    records: list[dict] = []
     if fetch_details:
         logger.info(f"[problems] fetching details for {len(problems)} problems (delay={delay}s)...")
         for i, p in enumerate(problems, 1):
@@ -516,21 +810,37 @@ def enrich_problem_set(output_dir: str | Path = DEFAULT_OUTPUT_DIR,
                     detail.setdefault("topicTags", p.get("topicTags", []))
                     detail.setdefault("questionFrontendId", p.get("frontendQuestionId"))
                     detail.setdefault("isPaidOnly", p.get("paidOnly", False))
-                    save_problem(detail, output_dir)
+                    record = save_problem(detail, output_dir, save_markdown=save_markdown)
+                    records.append(record)
             except Exception as exc:  # pragma: no cover - network dependent
                 logger.warning(f"[problems] failed to save {slug}: {exc}")
             if i % 50 == 0:
                 logger.info(f"[problems] saved {i}/{len(problems)} problem files")
             if delay:
                 time.sleep(delay)
+    else:
+        # Build lightweight records from the list payload so the index still works.
+        for p in problems:
+            slug = p.get("titleSlug") or _slugify_filename(p.get("title", "problem"))
+            records.append({
+                "title": p.get("title", slug),
+                "titleSlug": slug,
+                "questionFrontendId": str(p.get("frontendQuestionId") or p.get("questionId") or ""),
+                "difficulty": p.get("difficulty", "Unknown"),
+                "topicTags": p.get("topicTags", []),
+                "isPaidOnly": bool(p.get("paidOnly") or p.get("isPaidOnly", False)),
+            })
 
-    index_path = save_index(problems, output_dir)
+    index_path = save_index([_summarize(r) for r in records], output_dir)
+    index_json_path = save_index_json(records, output_dir)
     logger.info(f"[problems] wrote index -> {index_path}")
+    logger.info(f"[problems] wrote index json -> {index_json_path}")
 
     return {
         "output_dir": str(output_dir),
-        "problem_count": len(problems),
+        "problem_count": len(records),
         "index_path": str(index_path),
+        "index_json_path": str(index_json_path),
     }
 
 
@@ -547,6 +857,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                         help="Max number of problems to fetch (default 50; use --all for everything).")
     parser.add_argument("--all", action="store_true", help="Fetch every available problem.")
     parser.add_argument("--no-details", action="store_true", help="Only write the index, skip per-problem files.")
+    parser.add_argument("--no-md", action="store_true",
+                        help="Only write JSON + index; skip the per-problem .md view.")
     parser.add_argument("--delay", type=float, default=0.2, help="Delay between detail requests (seconds).")
     return parser
 
@@ -560,6 +872,7 @@ if __name__ == "__main__":
         page_limit=args.page_limit,
         max_problems=max_problems,
         fetch_details=not args.no_details,
+        save_markdown=not args.no_md,
         delay=args.delay,
     )
     logger.info(f"[problems] done: {summary}")

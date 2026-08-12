@@ -57,8 +57,10 @@ code-engine/
     ├── go-code/             # Generated Go code (one folder per task)
     │   └── <task_name>/<task_name>.go
     └── problems/            # Enriched LeetCode problem set (see below)
+        ├── problems_index.json  # Lightweight index for fast lookup
         ├── README.md        # Problem index (table of all problems)
-        └── <slug>.md        # One Markdown file per problem
+        ├── <slug>.json      # Canonical record (machine-readable)
+        └── <slug>.md        # Human-readable view (optional, derived)
 ```
 
 ---
@@ -107,16 +109,37 @@ Main configuration lives in `config.py`:
 
 ## 💻 Usage
 
-Run the entry script directly:
+`main.py` accepts a **flexible input** — either a custom question or a LeetCode
+problem resolved from your local cache (or fetched live).
 
 ```bash
+# Built-in example problem (binary tree serialization/deserialization).
 python main.py
+
+# Run a specific LeetCode problem by slug / ID / title / URL.
+python main.py --problem two-sum
+python main.py --problem 2
+python main.py --problem "https://leetcode.com/problems/two-sum/"
+python main.py --problem "add two numbers"          # title substring match
+
+# Run from a saved problem file (.json or .md).
+python main.py --file output/problems/two-sum.json
+
+# Run an arbitrary custom question.
+python main.py --custom "Implement an LRU Cache in Go"
+
+# List cached problems and exit.
+python main.py --list-problems
+
+# Only resolve from the local cache; never fetch from LeetCode.
+python main.py --problem two-sum --no-live
 ```
 
-`main.py` ships with an example algorithm problem (binary tree serialization/deserialization). To use your own question, edit the `input_question` string in `main.py` and run:
+If no source is given, the built-in example problem is used. The resolved text
+becomes the ``input_question`` fed to the workflow:
 
 ```python
-result = app.invoke({"input_question": "your question or problem"})
+result = app.invoke({"input_question": input_question})
 ```
 
 After running, the logs will output:
@@ -143,14 +166,20 @@ Generated Go code is saved to `output/go-code/<task_name>/<task_name>.go`.
 
 `problems.py` enriches the local problem set by querying LeetCode's public
 GraphQL API (using the same queries as
-[akarsh1995/leetcode-graphql-queries](https://github.com/akarsh1995/leetcode-graphql-queries))
-and saving everything as Markdown under `output/problems/`:
+[akarsh1995/leetcode-graphql-queries](https://github.com/akarsh1995/leetcode-graphql-queries)).
+Each problem is stored as a **canonical JSON record** (`<slug>.json`), which is
+the machine-readable source of truth the workflow reads when you pass
+`--problem` to `main.py`. A human-readable **Markdown view** (`<slug>.md`) and a
+lightweight **index** (`problems_index.json` + `README.md`) are derived from it.
 
+- `output/problems/<slug>.json` — the canonical record (title, difficulty, tags,
+  link, cleaned description, examples, hints, and a reconstructed **Go template**).
+- `output/problems/<slug>.md` — the same content rendered as Markdown for browsing.
+- `output/problems/problems_index.json` — a lightweight index for fast lookup.
 - `output/problems/README.md` — the full problem index (a table of all fetched problems).
-- `output/problems/<slug>.md` — one file per problem, containing title, difficulty,
-  tags, link, the cleaned-up description, examples, hints, and a reconstructed
-  **Go template** (LeetCode does not return a Go snippet server-side, so it is
-  rebuilt from the problem's `metaData`).
+
+> The Go template is rebuilt from the problem's `metaData` because LeetCode does
+> not return a Go snippet server-side.
 
 It is dependency-free — only the Python standard library is used (HTTP via
 `urllib`, HTML→Markdown via a small regex pipeline).
@@ -169,19 +198,26 @@ python problems.py --all --delay 0.3
 
 # Only write the index, skip per-problem detail files.
 python problems.py --no-details
+
+# Write JSON + index only, skip the per-problem .md view.
+python problems.py --no-md
 ```
 
 ### As a library
 
 ```python
-from problems import enrich_problem_set
+from problems import enrich_problem_set, resolve_problem, problem_to_input
 
 # Default: first 50 problems to output/problems.
 summary = enrich_problem_set()
 
 # Everything, into a custom directory.
 summary = enrich_problem_set(output_dir="output/problems", max_problems=None, delay=0.3)
-print(summary)  # {'output_dir': '...', 'problem_count': 4018, 'index_path': '...'}
+print(summary)  # {'output_dir': '...', 'problem_count': 4018, 'index_path': '...', 'index_json_path': '...'}
+
+# Build a workflow input from a LeetCode problem (local cache, then live fetch).
+record = resolve_problem("two-sum")
+input_question = problem_to_input(record)
 ```
 
 > **Note:** LeetCode's list endpoint is paginated; the script pages through it
