@@ -7,6 +7,7 @@ class StateKey:
     RETRY_COUNT = "retry_count"
     TASK_DIR = "task_dir"
     DIFFICULTY = "difficulty"
+    LEETCODE_SLUG = "leetcode_slug"
 
 
 class NodeName:

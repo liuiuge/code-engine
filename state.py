@@ -10,3 +10,4 @@ class AgentState(TypedDict):
     retry_count: int
     task_dir: str
     difficulty: str
+    leetcode_slug: str

@@ -21,6 +21,15 @@ def intent_classifier_node(state: AgentState):
 
 @trace_node_detailed
 def task_summarizer_node(state: AgentState):
+    # When the input is a resolved LeetCode problem, name the task after its
+    # canonical LeetCode slug (e.g. "two-sum") instead of asking the LLM to
+    # summarize. This keeps task directories stable and recognizable across runs.
+    leetcode_slug = state.get(StateKey.LEETCODE_SLUG)
+    if leetcode_slug:
+        slug = re.sub(r"[^a-zA-Z0-9_-]", "_", str(leetcode_slug).strip()).lower()
+        if slug:
+            return {StateKey.TASK_DIR: slug}
+
     prompt = PROMPTS[PromptKey.TASK_SUMMARIZER].format(
         input_question=state[StateKey.INPUT_QUESTION]
     )

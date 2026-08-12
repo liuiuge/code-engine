@@ -54,9 +54,12 @@ def build_input_question(args: argparse.Namespace) -> tuple[str, str | None]:
       - ``--custom``  : an arbitrary problem/question string.
       - (none)        : the built-in default example problem.
 
-    Returns ``(input_question, difficulty)``. ``difficulty`` is the LeetCode
-    difficulty ("Easy"/"Medium"/"Hard"/"Unknown") when a problem record is
-    resolved, otherwise ``None`` — it drives the coder's Hard-problem escalation.
+    Returns ``(input_question, difficulty, leetcode_slug)``. ``difficulty`` is
+    the LeetCode difficulty ("Easy"/"Medium"/"Hard"/"Unknown") when a problem
+    record is resolved, otherwise ``None`` — it drives the coder's Hard-problem
+    escalation. ``leetcode_slug`` is the canonical LeetCode ``titleSlug`` (e.g.
+    "two-sum") when a problem record is resolved, otherwise ``None`` — the task
+    summarizer uses it to name the task directory.
     """
     if args.problem:
         logger.info(f">>> resolving LeetCode problem: {args.problem}")
@@ -68,19 +71,19 @@ def build_input_question(args: argparse.Namespace) -> tuple[str, str | None]:
                 f"[main] could not resolve problem '{args.problem}'. "
                 f"Cache it with `python problems.py` or allow live fetch (drop --no-live)."
             )
-        return problem_to_input(record), record.get("difficulty")
+        return problem_to_input(record), record.get("difficulty"), record.get("titleSlug")
 
     if args.file:
         logger.info(f">>> loading problem file: {args.file}")
         rec = load_problem_file(Path(args.file))
         if not rec:
             raise SystemExit(f"[main] could not read problem file: {args.file}")
-        return problem_to_input(rec), rec.get("difficulty")
+        return problem_to_input(rec), rec.get("difficulty"), rec.get("titleSlug")
 
     if args.custom is not None:
-        return args.custom, None
+        return args.custom, None, None
 
-    return DEFAULT_QUESTION, None
+    return DEFAULT_QUESTION, None, None
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -124,11 +127,16 @@ if __name__ == "__main__":
         raise SystemExit(0)
 
     logger.info(">>> start workflow...")
-    input_question, difficulty = build_input_question(args)
+    input_question, difficulty, leetcode_slug = build_input_question(args)
 
     logger.info(f">>> difficulty: {difficulty}")
+    logger.info(f">>> leetcode slug: {leetcode_slug}")
     logger.info(f"\n[system log] input question:\n{input_question}")
-    result = app.invoke({"input_question": input_question, "difficulty": difficulty})
+    result = app.invoke({
+        "input_question": input_question,
+        "difficulty": difficulty,
+        "leetcode_slug": leetcode_slug,
+    })
 
     logger.info("\n--- final output ---")
     if result.get("category") == "coding":
