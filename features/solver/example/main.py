@@ -1,17 +1,27 @@
+"""
+features/solver/example/main.py — CLI entry for the code-generation pipeline.
+
+Run:
+    python -m features.solver.example.main --problem two-sum
+    python -m features.solver.example.main -f output/problems/two-sum.json
+    python -m features.solver.example.main -c "使用Golang 完成题目 ..."
+    python -m features.solver.example.main --list-problems
+"""
+
+from __future__ import annotations
+
 import argparse
 from pathlib import Path
 
-from logger import logger
-from workflow import app
-from problems import (
-    resolve_problem,
-    problem_to_input,
-    find_local_problem,
+from features.problems.service import (
+    DEFAULT_OUTPUT_DIR,
     list_local_problems,
     load_problem_file,
-    DEFAULT_OUTPUT_DIR,
+    problem_to_input,
+    resolve_problem,
 )
-
+from features.solver.service import generate_for_problem, run_pipeline
+from infrastructure.logger import logger
 
 # Default example problem, kept for backward compatibility.
 DEFAULT_QUESTION = """
@@ -35,7 +45,7 @@ DEFAULT_QUESTION = """
 def _print_problem_list(output_dir: str) -> None:
     problems = list_local_problems(output_dir)
     if not problems:
-        logger.info("[main] no cached problems found. Run `python problems.py` first.")
+        logger.info("[main] no cached problems found. Run `python -m features.problems.example.main` first.")
         return
     logger.info(f"[main] {len(problems)} cached problem(s) in {output_dir}:")
     for p in problems:
@@ -44,7 +54,7 @@ def _print_problem_list(output_dir: str) -> None:
                     f"({p.get('difficulty')}, {p.get('slug')}) tags: {tags}")
 
 
-def build_input_question(args: argparse.Namespace) -> tuple[str, str | None]:
+def build_input_question(args: argparse.Namespace) -> tuple[str, str | None, str | None]:
     """
     Resolve the workflow input from flexible sources:
 
@@ -69,7 +79,8 @@ def build_input_question(args: argparse.Namespace) -> tuple[str, str | None]:
         if not record:
             raise SystemExit(
                 f"[main] could not resolve problem '{args.problem}'. "
-                f"Cache it with `python problems.py` or allow live fetch (drop --no-live)."
+                f"Cache it with `python -m features.problems.example.main` "
+                f"or allow live fetch (drop --no-live)."
             )
         return problem_to_input(record), record.get("difficulty"), record.get("titleSlug")
 
@@ -84,40 +95,6 @@ def build_input_question(args: argparse.Namespace) -> tuple[str, str | None]:
         return args.custom, None, None
 
     return DEFAULT_QUESTION, None, None
-
-
-def run_pipeline(
-    input_question: str,
-    difficulty: str | None,
-    leetcode_slug: str | None,
-) -> dict:
-    """Run the code-generation workflow and return its final state dict."""
-    return app.invoke({
-        "input_question": input_question,
-        "difficulty": difficulty,
-        "leetcode_slug": leetcode_slug,
-    })
-
-
-def generate_for_problem(
-    query: str,
-    problems_dir: str | Path = DEFAULT_OUTPUT_DIR,
-    live: bool = True,
-) -> dict:
-    """
-    Resolve a LeetCode problem and generate its Go code via the workflow.
-
-    Shared by the CLI (main.py) and the FastAPI layer (api.py). Returns the
-    workflow result dict (contains ``code_path``, ``build_result``, ``category``,
-    ``task_dir``, etc.). Raises ``ValueError`` if the problem cannot be resolved.
-    """
-    record = resolve_problem(query, output_dir=problems_dir, live=live)
-    if not record:
-        raise ValueError(f"Could not resolve problem: {query}")
-    input_question = problem_to_input(record)
-    difficulty = record.get("difficulty")
-    leetcode_slug = record.get("titleSlug")
-    return run_pipeline(input_question, difficulty, leetcode_slug)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:

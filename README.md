@@ -37,23 +37,50 @@ flowchart TD
 
 ## 📁 Project Structure
 
+The repo is organized into three layers: a **web** main line, **feature** packages
+(problems enrichment + the solver pipeline), and a **shared infrastructure** package.
+
 ```
 code-engine/
-├── main.py                  # Entry point: build the question and trigger the workflow
-├── workflow.py              # StateGraph-based workflow orchestration (nodes + routing)
-├── nodes.py                 # Node logic (classify / generate / execute / fix)
-├── state.py                 # AgentState definition (TypedDict)
-├── constants.py             # Constants: state keys, node names, categories, prompt keys
-├── config.py                # Prompt loading + path config; loads the model registry from models.yaml
-├── models.yaml              # Model registry: per-model params (model tag, base_url, thinking toggle, ...)
-├── logger.py                # Logging and node-tracing decorators
-├── problems.py              # LeetCode problem-set enrichment (GraphQL -> Markdown)
+├── web/                     # Web service main line (uvicorn web.main:app)
+│   ├── main.py              # uvicorn entry point
+│   ├── api.py               # FastAPI app factory (registers routers, middleware, static UI)
+│   ├── schemas.py           # Pydantic request/response models
+│   ├── dependencies.py      # Shared paths + cross-cutting helpers
+│   └── routes/
+│       ├── meta.py          # /health, /api/stats
+│       ├── problems.py      # /api/problems/* (list, detail, pull, generate)
+│       └── go_code.py       # /api/go-code/* (list, detail, raw)
+│
+├── features/                # Business feature packages (also runnable standalone)
+│   ├── problems/            # LeetCode problem-set enrichment (GraphQL -> Markdown)
+│   │   ├── client.py        # GraphQL HTTP client
+│   │   ├── models.py        # normalize_problem / render_problem_markdown / Go template
+│   │   ├── storage.py       # save / load / index
+│   │   ├── service.py       # resolve_problem / enrich_problem_set / problem_to_input
+│   │   └── example/         # CLI: python -m features.problems.example.main
+│   └── solver/              # LangGraph code-generation pipeline
+│       ├── state.py         # AgentState (TypedDict)
+│       ├── executor.py      # Go code extract -> write -> go fmt -> go build
+│       ├── nodes.py         # Node logic (classify / generate / execute / fix)
+│       ├── workflow.py      # StateGraph orchestration (nodes + routing)
+│       ├── service.py       # run_pipeline / generate_for_problem
+│       └── example/         # CLI: python -m features.solver.example.main
+│
+├── infrastructure/          # Shared, dependency-light internals
+│   ├── paths.py             # PROJECT_ROOT / PROMPT_DIR / DEFAULT_PROBLEMS_DIR / DEFAULT_GO_CODE_DIR
+│   ├── logger.py            # Logging and node-tracing decorators
+│   ├── constants.py         # State keys, node names, categories, prompt keys
+│   ├── config.py            # Prompt loading + model registry (models.yaml)
+│   └── models.yaml          # Model registry: per-model params (model tag, base_url, thinking toggle, ...)
+│
 ├── prompts/                 # Prompts for each node (Markdown)
 │   ├── intent_classifier.md
 │   ├── task_summarizer.md
 │   ├── code_generator.md
 │   ├── code_fixer.md
 │   └── general_assistant.md
+├── frontend/                # Static UI (served at /ui/)
 └── output/
     ├── go-code/             # Generated Go code (one folder per task)
     │   └── <task_name>/<task_name>.go
@@ -96,9 +123,11 @@ go version
 
 ## ⚙️ Configuration
 
-Model configuration lives in **`models.yaml`** (separated from `config.py` so each
-model can carry its own invocation parameters). `config.py` loads it on import and
-builds one `ChatOllama` instance per model.
+Model configuration lives in **`infrastructure/models.yaml`** (separated from
+`infrastructure/config.py` so each model can carry its own invocation parameters).
+`infrastructure/config.py` loads it on import and builds one `ChatOllama` instance
+per model. Project paths (root, prompts, output dirs) are centralized in
+`infrastructure/paths.py` so no business module derives paths from `__file__`.
 
 ```yaml
 default: minimax          # which model `config.llm` uses
@@ -126,7 +155,7 @@ models:
 | `timeout` | Wall-clock cap (seconds) for a single model call. On timeout, escalatable roles retry on `escalate_to` instead of hanging. Defaults to the top-level `timeout:` (300s). |
 | `extra_params` | Extra Ollama options forwarded as `model_kwargs` (`num_ctx`, `repeat_penalty`, `stop`, ...) |
 
-`config.py` exposes:
+`infrastructure/config.py` exposes:
 
 | Symbol | Description |
 | --- | --- |
@@ -134,7 +163,18 @@ models:
 | `MODELS` | `dict` mapping model name → `ChatOllama` |
 | `get_llm(name=None)` | Returns a specific model's instance, or the default |
 | `available_models()` | List of model names defined in `models.yaml` |
-| `BASE_DIR` / `PROMPTS` | Project root and the loaded prompt dictionary |
+| `invoke_model(role, prompt, ...)` | Resolve the right model (role + retries + difficulty), enforce timeout |
+| `PROMPTS` | The loaded prompt dictionary |
+
+`infrastructure/paths.py` exposes:
+
+| Symbol | Description |
+| --- | --- |
+| `PROJECT_ROOT` | Repo root directory |
+| `PROMPT_DIR` | `PROJECT_ROOT / "prompts"` |
+| `MODEL_CONFIG_PATH` | `PROJECT_ROOT / "infrastructure" / "models.yaml"` |
+| `DEFAULT_PROBLEMS_DIR` | `PROJECT_ROOT / "output" / "problems"` |
+| `DEFAULT_GO_CODE_DIR` | `PROJECT_ROOT / "output" / "go-code"` |
 
 > To switch the active model, change `default:` in `models.yaml` (e.g. to `local`).
 > To route a specific node to a different model, call `get_llm("local")` inside that node.
@@ -183,37 +223,40 @@ and `timeout`) at runtime so you can watch the balancing happen.
 
 ## 💻 Usage
 
-`main.py` accepts a **flexible input** — either a custom question or a LeetCode
-problem resolved from your local cache (or fetched live).
+The solver is run via **`features/solver/example/main.py`**, which accepts a
+**flexible input** — either a custom question or a LeetCode problem resolved from
+your local cache (or fetched live).
 
 ```bash
 # Built-in example problem (binary tree serialization/deserialization).
-python main.py
+python -m features.solver.example.main
 
 # Run a specific LeetCode problem by slug / ID / title / URL.
-python main.py --problem two-sum
-python main.py --problem 2
-python main.py --problem "https://leetcode.com/problems/two-sum/"
-python main.py --problem "add two numbers"          # title substring match
+python -m features.solver.example.main --problem two-sum
+python -m features.solver.example.main --problem 2
+python -m features.solver.example.main --problem "https://leetcode.com/problems/two-sum/"
+python -m features.solver.example.main --problem "add two numbers"          # title substring match
 
 # Run from a saved problem file (.json or .md).
-python main.py --file output/problems/two-sum.json
+python -m features.solver.example.main --file output/problems/two-sum.json
 
 # Run an arbitrary custom question.
-python main.py --custom "Implement an LRU Cache in Go"
+python -m features.solver.example.main --custom "Implement an LRU Cache in Go"
 
 # List cached problems and exit.
-python main.py --list-problems
+python -m features.solver.example.main --list-problems
 
 # Only resolve from the local cache; never fetch from LeetCode.
-python main.py --problem two-sum --no-live
+python -m features.solver.example.main --problem two-sum --no-live
 ```
 
 If no source is given, the built-in example problem is used. The resolved text
 becomes the ``input_question`` fed to the workflow:
 
 ```python
-result = app.invoke({"input_question": input_question})
+from features.solver.service import run_pipeline
+
+result = run_pipeline(input_question, difficulty, leetcode_slug)
 ```
 
 After running, the logs will output:
@@ -227,7 +270,8 @@ Generated Go code is saved to `output/go-code/<task_name>/<task_name>.go`.
 
 ## 🔁 Compile-Fix Strategy
 
-`code_executor_node` extracts the Go code block from the response via regex, writes it to a file, and runs:
+`features/solver/executor.py` (`execute_go_code`) extracts the Go code block from
+the response via regex, writes it to a file, and runs:
 
 1. `go fmt`: format the code;
 2. `go build -o /dev/null`: compile check only;
@@ -238,13 +282,14 @@ Generated Go code is saved to `output/go-code/<task_name>/<task_name>.go`.
 
 ## 📚 LeetCode Problem Enrichment
 
-`problems.py` enriches the local problem set by querying LeetCode's public
+`features/problems` enriches the local problem set by querying LeetCode's public
 GraphQL API (using the same queries as
 [akarsh1995/leetcode-graphql-queries](https://github.com/akarsh1995/leetcode-graphql-queries)).
 Each problem is stored as a **canonical JSON record** (`<slug>.json`), which is
 the machine-readable source of truth the workflow reads when you pass
-`--problem` to `main.py`. A human-readable **Markdown view** (`<slug>.md`) and a
-lightweight **index** (`problems_index.json` + `README.md`) are derived from it.
+`--problem` to `features/solver/example/main.py`. A human-readable **Markdown view**
+(`<slug>.md`) and a lightweight **index** (`problems_index.json` + `README.md`) are
+derived from it.
 
 - `output/problems/<slug>.json` — the canonical record (title, difficulty, tags,
   link, cleaned description, examples, hints, and a reconstructed **Go template**).
@@ -262,25 +307,25 @@ It is dependency-free — only the Python standard library is used (HTTP via
 
 ```bash
 # Fetch the first 50 problems (default) and write the index + per-problem files.
-python problems.py
+python -m features.problems.example.main
 
 # Fetch a specific number, with a polite delay between detail requests.
-python problems.py --limit 200 --delay 0.3
+python -m features.problems.example.main --limit 200 --delay 0.3
 
 # Fetch EVERY available problem (thousands — can take a while).
-python problems.py --all --delay 0.3
+python -m features.problems.example.main --all --delay 0.3
 
 # Only write the index, skip per-problem detail files.
-python problems.py --no-details
+python -m features.problems.example.main --no-details
 
 # Write JSON + index only, skip the per-problem .md view.
-python problems.py --no-md
+python -m features.problems.example.main --no-md
 ```
 
 ### As a library
 
 ```python
-from problems import enrich_problem_set, resolve_problem, problem_to_input
+from features.problems.service import enrich_problem_set, resolve_problem, problem_to_input
 
 # Default: first 50 problems to output/problems.
 summary = enrich_problem_set()
@@ -300,9 +345,43 @@ input_question = problem_to_input(record)
 
 ---
 
+## 🌐 Web Service
+
+The web layer is the production main line. It serves the generated artifacts
+(problems + Go code) over a FastAPI app and mounts the static UI at `/ui/`.
+
+```bash
+# Production start (uvicorn entry point: web.main:app)
+uvicorn web.main:app --reload --port 8000
+
+# Or equivalently:
+python -m web.main
+```
+
+Then open **http://localhost:8000/ui/** in a browser. The API docs live at
+**/docs**. Key endpoints:
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/health` | Health / endpoint list |
+| `GET` | `/api/stats` | Overview counts (problems, go-code) |
+| `GET` | `/api/problems` | List problems (filter + sort + paginate) |
+| `GET` | `/api/problems/{identifier}` | Full problem record (slug / id / title / URL) |
+| `GET` | `/api/problems/{identifier}/go-code` | Best-effort Go code linked to a problem |
+| `POST` | `/api/problems/pull` | Pull NEW problems from LeetCode (bulk) |
+| `POST` | `/api/problems/{identifier}/pull` | Pull a single problem by slug / URL |
+| `POST` | `/api/problems/{identifier}/generate` | Generate Go code for a cached problem |
+| `GET` | `/api/go-code` | List generated Go code (search + paginate) |
+| `GET` | `/api/go-code/{task_name}` | Full Go code (metadata + source) |
+| `GET` | `/api/go-code/{task_name}/raw` | Raw `.go` file (`FileResponse`) |
+
+The `/generate` route (and the solver pipeline generally) is imported **lazily**
+inside the handler, so the API starts even if `langgraph` / `langchain-ollama`
+are not installed — those are only required when you actually call `/generate`.
+
 ## 📝 Notes & Limitations
 
-- Currently only **Go** code generation and compile checking are supported (the regex and commands in `code_executor_node` are Go-specific).
+- Currently only **Go** code generation and compile checking are supported (the regex and commands in `features/solver/executor.py` are Go-specific).
 - Intent classification relies on the prompt instructing the model to output only the words `coding` / `general`, so it places some demand on the model's instruction-following ability.
 - The project ships a `requirements.txt`; install it with `pip install -r requirements.txt`.
 - `output/` and `__pycache__/` are already ignored in `.gitignore`.

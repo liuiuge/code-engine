@@ -1,16 +1,16 @@
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 
-from logger import logger
-from state import AgentState
-from constants import StateKey, NodeName, Category, BUILD_SUCCESS_MESSAGE
-from nodes import (
-    intent_classifier_node,
-    task_summarizer_node,
-    code_generator_node,
-    general_assistant_node,
+from features.solver.nodes import (
     code_executor_node,
     code_fixer_node,
+    code_generator_node,
+    general_assistant_node,
+    intent_classifier_node,
+    task_summarizer_node,
 )
+from features.solver.state import AgentState
+from infrastructure.constants import BUILD_SUCCESS_MESSAGE, Category, NodeName, StateKey
+from infrastructure.logger import logger
 
 
 def route_by_category(state: AgentState):

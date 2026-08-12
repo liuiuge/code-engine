@@ -1,12 +1,16 @@
-import os
 import re
-import subprocess
-from pathlib import Path
 
-from state import AgentState
-from logger import trace_node, trace_node_detailed
-from config import invoke_model, PROMPTS, BASE_DIR
-from constants import StateKey, Category, PromptKey, DEFAULT_TASK_NAME, BUILD_SUCCESS_MESSAGE
+from infrastructure.config import PROMPTS, invoke_model
+from infrastructure.constants import (
+    Category,
+    DEFAULT_TASK_NAME,
+    PromptKey,
+    StateKey,
+)
+from infrastructure.logger import trace_node, trace_node_detailed
+from infrastructure.paths import DEFAULT_GO_CODE_DIR
+from features.solver.executor import execute_go_code
+from features.solver.state import AgentState
 
 
 @trace_node
@@ -67,35 +71,14 @@ def general_assistant_node(state: AgentState):
 
 @trace_node
 def code_executor_node(state: AgentState):
-    pattern = r"```(?:go|golang)?\n(.*?)```"
-    match = re.search(pattern, state[StateKey.FINAL_OUTPUT], re.DOTALL)
-    if not match:
+    from features.solver.executor import extract_go_code
+
+    code = extract_go_code(state[StateKey.FINAL_OUTPUT])
+    if not code:
         return {StateKey.BUILD_RESULT: "Error: No Go code block found in the output."}
 
-    code = match.group(1).strip()
-
     task_name = state.get(StateKey.TASK_DIR, DEFAULT_TASK_NAME)
-    dynamic_output_dir = BASE_DIR / "output" / "go-code" / task_name
-    dynamic_output_dir.mkdir(parents=True, exist_ok=True)
-    file_path = dynamic_output_dir / f"{task_name}.go"
-
-    file_path.write_text(code, encoding="utf-8")
-
-    subprocess.run(["go", "fmt", str(file_path)], capture_output=True)
-
-    build_process = subprocess.run(
-        ["go", "build", "-o", os.devnull, str(file_path)],
-        capture_output=True,
-        text=True,
-    )
-
-    if build_process.returncode != 0:
-        return {
-            StateKey.CODE_PATH: str(file_path),
-            StateKey.BUILD_RESULT: f"compile error:\n{build_process.stderr}",
-        }
-
-    return {StateKey.CODE_PATH: str(file_path), StateKey.BUILD_RESULT: BUILD_SUCCESS_MESSAGE}
+    return execute_go_code(code, task_name, DEFAULT_GO_CODE_DIR)
 
 
 @trace_node_detailed

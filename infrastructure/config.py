@@ -4,7 +4,8 @@ from pathlib import Path
 
 from langchain_ollama import ChatOllama
 
-from logger import logger
+from infrastructure.logger import logger
+from infrastructure.paths import MODEL_CONFIG_PATH, PROMPT_DIR
 
 
 class ModelTimeout(Exception):
@@ -18,11 +19,7 @@ os.environ["ALL_PROXY"] = ""
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 os.environ["no_proxy"] = "localhost,127.0.0.1"
 
-# 2. Define paths for prompts, output, and the model registry
-BASE_DIR = Path(__file__).resolve().parent
-PROMPT_DIR = BASE_DIR / "prompts"
-MODEL_CONFIG_PATH = BASE_DIR / "models.yaml"
-
+# 2. Load prompts from the centralized prompt directory.
 try:
     PROMPTS = {
         "intent_classifier": (PROMPT_DIR / "intent_classifier.md").read_text(encoding="utf-8"),
@@ -236,3 +233,11 @@ def invoke_model(role: str, prompt, retry_count: int = 0,
                 )
                 return _invoke_with_timeout(online, prompt, online_budget, **kwargs)
         raise  # no escalation path (already online or non-escalatable) -> propagate
+
+
+if __name__ == "__main__":
+    print("Loaded models:", available_models())
+    print("Default model:", DEFAULT_MODEL)
+    print("Prompts:", list(PROMPTS.keys()))
+    print("Model config:", MODEL_CONFIG_PATH)
+    print("Prompt dir:", PROMPT_DIR)
