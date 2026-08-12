@@ -1,12 +1,15 @@
 import concurrent.futures
 import os
 from pathlib import Path
+
 from langchain_ollama import ChatOllama
+
 from logger import logger
 
 
 class ModelTimeout(Exception):
     """Raised when a single model call exceeds its configured wall-clock budget."""
+
 
 # 1. Bypass proxy interception for Python processes
 os.environ["HTTP_PROXY"] = ""
@@ -64,9 +67,8 @@ def _build_llm(spec: dict) -> ChatOllama:
     if spec.get("top_p") is not None:
         kwargs["top_p"] = float(spec["top_p"])
 
-    # Reasoning / thinking toggle. The underlying field name differs across
-    # langchain-ollama versions: newer (>= 1.x) use `reasoning`, older use
-    # `thinking`. Map the YAML's `thinking` key to whichever is available.
+    # Reasoning/thinking toggle: newer langchain-ollama (>= 1.x) uses `reasoning`,
+    # older uses `thinking`; map the YAML `thinking` key to whichever is available.
     thinking = spec.get("thinking")
     if thinking is not None:
         if "reasoning" in ChatOllama.model_fields:
@@ -119,9 +121,8 @@ _ESCALATE_TO = _ROUTING.get("escalate_to", DEFAULT_MODEL)
 _ESCALATE_ROLES = set(_ROUTING.get("escalate_roles", []) or [])
 _HARD_ESCALATE_ROLES = set(_ROUTING.get("hard_escalate_roles", []) or [])
 
-# Wall-clock timeout budget (seconds) per model call. A single call that runs
-# longer than this is aborted and (for escalatable roles) retried on the online
-# model instead of hanging the whole workflow.
+# Wall-clock timeout (seconds) per model call. A call exceeding it is aborted
+# and (for escalatable roles) retried on the online model instead of hanging.
 _GLOBAL_TIMEOUT = int(_MODEL_CONFIG.get("timeout", 300))
 _MODEL_TIMEOUTS = {
     name: int(spec.get("timeout", _GLOBAL_TIMEOUT))

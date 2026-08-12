@@ -70,7 +70,9 @@ _HEADERS = {
 }
 
 LIST_QUERY = """
-query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
+query problemsetQuestionList(
+  $categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput
+) {
   problemsetQuestionList: questionList(
     categorySlug: $categorySlug
     limit: $limit
@@ -179,9 +181,8 @@ def html_to_markdown(content: str) -> str:
         code = re.sub(r"<(strong|b)[^>]*>(.*?)</\1>", r"**\2**", code, flags=re.IGNORECASE)
         code = re.sub(r"<(em|i)[^>]*>(.*?)</\1>", r"*\2*", code, flags=re.IGNORECASE)
         code = re.sub(r"<[^>]+>", "", code)
-        # NOTE: do NOT html.unescape here — leave &lt; / &gt; as entities so the
-        # later "strip remaining tags" step cannot mistake `2 <= x` for a tag.
-        # The final html.unescape() at the end resolves all entities.
+        # NOTE: do NOT html.unescape here — leave &lt;/&gt; as entities so the later
+        # "strip remaining tags" step can't mistake `2 <= x`; the final unescape resolves entities.
         code = code.strip("\n")
         pre_blocks.append("```text\n" + code + "\n```")
         return f"\x00PRE{len(pre_blocks) - 1}\x00"
@@ -189,15 +190,30 @@ def html_to_markdown(content: str) -> str:
     text = re.sub(r"<pre[^>]*>.*?</pre>", _stash_pre, text, flags=re.DOTALL | re.IGNORECASE)
 
     # Superscript / subscript (e.g. 10<sup>4</sup> -> 10^4).
-    text = re.sub(r"<sup[^>]*>(.*?)</sup>", lambda m: f"^{_unescape(m.group(1))}", text, flags=re.IGNORECASE)
-    text = re.sub(r"<sub[^>]*>(.*?)</sub>", lambda m: f"_{_unescape(m.group(1))}", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"<sup[^>]*>(.*?)</sup>",
+        lambda m: f"^{_unescape(m.group(1))}",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"<sub[^>]*>(.*?)</sub>",
+        lambda m: f"_{_unescape(m.group(1))}",
+        text,
+        flags=re.IGNORECASE,
+    )
 
     # Inline code. Use [^<]* (not .*?) so the match can never cross a tag
     # boundary and swallow unrelated <code> spans elsewhere in the document.
     # Do NOT unescape here — leave &lt;/&gt; as entities so the later "strip
     # remaining tags" step cannot mistake `a <= b` for a tag; the final
     # html.unescape() resolves everything at the end.
-    text = re.sub(r"<code[^>]*>([^<]*)</code>", lambda m: f"`{m.group(1)}`", text, flags=re.IGNORECASE | re.ASCII)
+    text = re.sub(
+        r"<code[^>]*>([^<]*)</code>",
+        lambda m: f"`{m.group(1)}`",
+        text,
+        flags=re.IGNORECASE | re.ASCII,
+    )
 
     # Lists. Consume any leading indentation *before* <li> and the whitespace
     # LeetCode puts right after it.
@@ -262,7 +278,7 @@ def _fmt_emphasis(marker: str, raw: str) -> str:
     """
     lead = raw[:1].isspace() or raw.startswith("&nbsp;")
     trail = (len(raw) > 0 and (raw[-1:].isspace() or raw.endswith("&nbsp;")))
-    s = _unescape(raw)                  # unescape (handles &nbsp;) + strip
+    s = _unescape(raw)  # unescape (handles &nbsp;) + strip
     s = re.sub(r"\s+", " ", s).strip()  # collapse any internal whitespace
     left = " " if lead else ""
     right = " " if trail else ""
@@ -513,7 +529,10 @@ def save_index(records: list[dict], output_dir: Path) -> Path:
     lines: list[str] = []
     lines.append("# LeetCode Problem Set")
     lines.append("")
-    lines.append(f"_Generated locally from LeetCode's GraphQL API. Total problems in index: **{len(records)}**._")
+    lines.append(
+        f"_Generated locally from LeetCode's GraphQL API. "
+        f"Total problems in index: **{len(records)}**._"
+    )
     lines.append("")
     lines.append("| ID | Title | Difficulty | Tags | Paid | File |")
     lines.append("|----|-------|------------|------|------|------|")
@@ -853,13 +872,23 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT_DIR), help="Output directory.")
     parser.add_argument("--category", default="", help="LeetCode category slug (empty = all).")
     parser.add_argument("--page-limit", type=int, default=50, help="Problems per GraphQL page.")
-    parser.add_argument("--limit", type=int, default=50,
-                        help="Max number of problems to fetch (default 50; use --all for everything).")
+    parser.add_argument(
+        "--limit", type=int, default=50,
+        help="Max number of problems to fetch (default 50; use --all for everything).",
+    )
     parser.add_argument("--all", action="store_true", help="Fetch every available problem.")
-    parser.add_argument("--no-details", action="store_true", help="Only write the index, skip per-problem files.")
-    parser.add_argument("--no-md", action="store_true",
-                        help="Only write JSON + index; skip the per-problem .md view.")
-    parser.add_argument("--delay", type=float, default=0.2, help="Delay between detail requests (seconds).")
+    parser.add_argument(
+        "--no-details", action="store_true",
+        help="Only write the index, skip per-problem files.",
+    )
+    parser.add_argument(
+        "--no-md", action="store_true",
+        help="Only write JSON + index; skip the per-problem .md view.",
+    )
+    parser.add_argument(
+        "--delay", type=float, default=0.2,
+        help="Delay between detail requests (seconds).",
+    )
     return parser
 
 

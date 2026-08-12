@@ -8,6 +8,7 @@ class StateKey:
     TASK_DIR = "task_dir"
     DIFFICULTY = "difficulty"
 
+
 class NodeName:
     INTENT_CLASSIFIER = "intent_classifier_node"
     TASK_SUMMARIZER = "task_summarizer_node"
@@ -16,6 +17,7 @@ class NodeName:
     CODE_EXECUTOR = "code_executor_node"
     CODE_FIXER = "code_fixer_node"
 
+
 class PromptKey:
     INTENT_CLASSIFIER = "intent_classifier"
     TASK_SUMMARIZER = "task_summarizer"
@@ -23,9 +25,11 @@ class PromptKey:
     GENERAL_ASSISTANT = "general_assistant"
     CODE_FIXER = "code_fixer"
 
+
 class Category:
     CODING = "coding"
     GENERAL = "general"
+
 
 DEFAULT_TASK_NAME = "default_task"
 BUILD_SUCCESS_MESSAGE = "static analysis passed, compilation successful"

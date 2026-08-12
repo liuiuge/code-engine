@@ -27,10 +27,10 @@ The service is read-only: it serves what the workflow has already produced.
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -113,7 +113,7 @@ class GoCodeSummary(BaseModel):
     size_bytes: int = 0
     modified_at: str = ""
     line_count: int = 0
-    related_problem: Optional[str] = None  # problem slug, best-effort
+    related_problem: str | None = None  # problem slug, best-effort
 
 
 class GoCodeDetail(BaseModel):
@@ -123,7 +123,7 @@ class GoCodeDetail(BaseModel):
     size_bytes: int = 0
     modified_at: str = ""
     line_count: int = 0
-    related_problem: Optional[str] = None
+    related_problem: str | None = None
     content: str = ""
 
 
@@ -173,20 +173,19 @@ def _load_index() -> dict:
     index_path = PROBLEMS_DIR / "problems_index.json"
     if index_path.exists():
         try:
-            import json
             return json.loads(index_path.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {"problems": list_local_problems(PROBLEMS_DIR)}
 
 
-def _go_code_dir_for_problem(slug: str) -> Optional[Path]:
+def _go_code_dir_for_problem(slug: str) -> Path | None:
     """Best-effort: problems use dashes, go-code tasks use underscores."""
     candidate = GO_CODE_DIR / slug.replace("-", "_")
     return candidate if candidate.is_dir() else None
 
 
-def _problem_slug_for_task(task_name: str) -> Optional[str]:
+def _problem_slug_for_task(task_name: str) -> str | None:
     """Best-effort reverse lookup of a problem slug for a go-code task."""
     slug_candidate = task_name.replace("_", "-")
     index = _load_index()
@@ -275,19 +274,25 @@ def stats():
 
 @app.get("/api/problems", response_model=PaginatedProblems, tags=["problems"])
 def list_problems(
-    difficulty: Optional[str] = Query(None, description="Filter by difficulty (Easy/Medium/Hard)"),
-    tag: Optional[str] = Query(None, description="Filter by topic tag (case-insensitive)"),
-    paid: Optional[bool] = Query(None, description="Filter by paid-only status"),
-    search: Optional[str] = Query(None, description="Substring match on title (case-insensitive)"),
+    difficulty: str | None = Query(None, description="Filter by difficulty (Easy/Medium/Hard)"),
+    tag: str | None = Query(None, description="Filter by topic tag (case-insensitive)"),
+    paid: bool | None = Query(None, description="Filter by paid-only status"),
+    search: str | None = Query(None, description="Substring match on title (case-insensitive)"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
     problems = list_local_problems(PROBLEMS_DIR)
 
     if difficulty:
-        problems = [p for p in problems if (p.get("difficulty") or "").lower() == difficulty.lower()]
+        problems = [
+            p for p in problems
+            if (p.get("difficulty") or "").lower() == difficulty.lower()
+        ]
     if tag:
-        problems = [p for p in problems if tag.lower() in [t.lower() for t in (p.get("tags") or [])]]
+        problems = [
+            p for p in problems
+            if tag.lower() in [t.lower() for t in (p.get("tags") or [])]
+        ]
     if paid is not None:
         problems = [p for p in problems if bool(p.get("paid")) == paid]
     if search:
@@ -345,7 +350,9 @@ def problem_go_code(identifier: str):
 
 @app.get("/api/go-code", response_model=PaginatedGoCode, tags=["go-code"])
 def list_go_code(
-    search: Optional[str] = Query(None, description="Substring match on task name (case-insensitive)"),
+    search: str | None = Query(
+        None, description="Substring match on task name (case-insensitive)"
+    ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):

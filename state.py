@@ -1,5 +1,6 @@
 from typing import TypedDict
 
+
 class AgentState(TypedDict):
     input_question: str
     category: str
