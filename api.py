@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -179,26 +180,46 @@ def _load_index() -> dict:
     return {"problems": list_local_problems(PROBLEMS_DIR)}
 
 
-def _go_code_dir_for_problem(slug: str) -> Path | None:
-    """Best-effort: problems use dashes, go-code tasks use underscores."""
-    candidate = GO_CODE_DIR / slug.replace("-", "_")
-    return candidate if candidate.is_dir() else None
+def _norm_key(name: str) -> str:
+    """Normalize a slug/task name to a separator-insensitive key.
+
+    Lowercases and strips every non-alphanumeric character, so that e.g.
+    ``median-of-two-sorted-arrays``, ``median_of_two_sorted_arrays`` and
+    ``medianoftwosortedarrays`` all collapse to the same key. This keeps the
+    problem<->go-code link working even though folder names mix dashes and
+    underscores across the repo.
+    """
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
 
 
-def _problem_slug_for_task(task_name: str) -> str | None:
-    """Best-effort reverse lookup of a problem slug for a go-code task."""
-    slug_candidate = task_name.replace("_", "-")
+def _go_code_norm_map() -> dict[str, Path]:
+    """Map normalized key -> go-code folder (only folders with a .go file)."""
+    m: dict[str, Path] = {}
+    if GO_CODE_DIR.is_dir():
+        for folder in sorted(GO_CODE_DIR.iterdir()):
+            if folder.is_dir() and any(folder.glob("*.go")):
+                m.setdefault(_norm_key(folder.name), folder)
+    return m
+
+
+def _problem_norm_map() -> dict[str, str]:
+    """Map normalized key -> problem slug (from the problems index)."""
+    m: dict[str, str] = {}
     index = _load_index()
     for entry in index.get("problems", []):
-        eslug = (entry.get("slug") or "").lower()
-        if eslug == slug_candidate:
-            return eslug
-        if (entry.get("slug") or "").replace("-", "_").lower() == task_name.lower():
-            return eslug
-    return None
+        slug = entry.get("slug") or ""
+        if slug:
+            m.setdefault(_norm_key(slug), slug)
+    return m
 
 
-def _go_code_summary(go_path: Path) -> GoCodeSummary:
+def _go_code_dir_for_problem(slug: str, go_map: dict | None = None) -> Path | None:
+    """Find the go-code folder for a problem slug (separator-insensitive)."""
+    m = go_map if go_map is not None else _go_code_norm_map()
+    return m.get(_norm_key(slug))
+
+
+def _go_code_summary(go_path: Path, problem_map: dict | None = None) -> GoCodeSummary:
     folder = go_path.parent
     task_name = folder.name
     stat = go_path.stat()
@@ -206,6 +227,7 @@ def _go_code_summary(go_path: Path) -> GoCodeSummary:
         text = go_path.read_text(encoding="utf-8")
     except Exception:
         text = ""
+    m = problem_map if problem_map is not None else _problem_norm_map()
     return GoCodeSummary(
         task_name=task_name,
         file=go_path.name,
@@ -213,7 +235,7 @@ def _go_code_summary(go_path: Path) -> GoCodeSummary:
         size_bytes=stat.st_size,
         modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
         line_count=text.count("\n") + 1 if text else 0,
-        related_problem=_problem_slug_for_task(task_name),
+        related_problem=m.get(_norm_key(task_name)),
     )
 
 
@@ -301,6 +323,7 @@ def list_problems(
 
     total = len(problems)
     page = problems[offset: offset + limit]
+    go_map = _go_code_norm_map()
     items = [
         ProblemSummary(
             id=p.get("id", ""),
@@ -310,7 +333,7 @@ def list_problems(
             tags=p.get("tags", []) or [],
             paid=bool(p.get("paid")),
             file=p.get("file", ""),
-            has_go_code=_go_code_dir_for_problem(p.get("slug", "")) is not None,
+            has_go_code=_go_code_dir_for_problem(p.get("slug", ""), go_map) is not None,
         )
         for p in page
     ]
@@ -371,7 +394,8 @@ def list_go_code(
 
     total = len(unique)
     page = unique[offset: offset + limit]
-    items = [_go_code_summary(g) for g in page]
+    problem_map = _problem_norm_map()
+    items = [_go_code_summary(g, problem_map) for g in page]
     return PaginatedGoCode(total=total, count=len(items), limit=limit, offset=offset, items=items)
 
 
