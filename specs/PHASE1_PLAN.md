@@ -35,7 +35,7 @@ SSE 可以直接挂在现有 `asyncio.to_thread(_do_generate)` 之上、由事�
 > 每个 Epic 含：目标 / 范围 / 改动点（Dev 只读，PM 仅列位置）/ 验收(AC) / 依赖 / 工作量。
 > 验收均二值可判，符合 `pm.md` 出口质量。
 
-### P1-1 进度事件总线（Pipeline Event Bus）
+### P1-1 进度事件总线（开发就绪）
 - **目标**：管线每一步产出结构化事件，供 SSE / 日志 / Job 共用，单一实现。
 - **范围**：定义 `PipelineEvent`（type, node, ts, data）；让节点在 进入/结束(含耗时)/重试/模型路由 时 emit；生成节点额外发 token chunk 事件。
 - **改动点**：`infrastructure/logger.py`（`trace_node` 加 hook）、`features/solver/{workflow,nodes}.py`（emit 点）、新增 `infrastructure/events.py`（事件定义 + 简单发布订阅）。
@@ -44,8 +44,9 @@ SSE 可以直接挂在现有 `asyncio.to_thread(_do_generate)` 之上、由事�
   - AT-E2：生成节点在结果未完整前即发出 token 事件（若底层流式）；非流式模型至少发「生成开始/结束」两事件。
   - AT-E3：日志与后续 SSE 共用同一总线，不存在两份事件实现。
 - **依赖**：无。**工作量：M**。
+- **开发就绪 spec**：`specs/realtime-progress/EVENT_BUS_SPEC.md`（EB-01…04 + 回归场景）。
 
-### P1-2 流式模型调用（解 timeout 权衡）
+### P1-2 流式模型调用（开发就绪）
 - **目标**：`invoke_model` 支持流式输出，**同时保留 wall-clock 超时守护**（解决 `config.py:190` 刻意关流式的权衡）。
 - **范围**：新增 `invoke_model_stream(...)` 返回 token 迭代器；后台线程监控 deadline，到期中断流并触发 escalate（同现有逻辑）；非流式模型降级为「先全量再逐块 yield」。
 - **改动点**：`infrastructure/config.py`（`_invoke_with_timeout` + 流式变体）、`infrastructure/constants.py`（事件类型）。
@@ -54,6 +55,7 @@ SSE 可以直接挂在现有 `asyncio.to_thread(_do_generate)` 之上、由事�
   - AT-S2：模拟 local 超时（极短 budget），流式调用被中断且 escalatable 角色自动升级 online（行为同现有 `invoke_model` 超时）。
   - AT-S3：流式/非流式两种调用对管线终态结果（编译/验证）一致。
 - **依赖**：无（可与 P1-1 并行）。**工作量：M**。
+- **开发就绪 spec**：`specs/realtime-progress/STREAMING_SPEC.md`（ST-01…05 + 回归场景）。
 
 ### P1-3 SSE 进度 / 流式端点
 - **目标**：前端实时收到阶段进度 + 代码 token。
@@ -246,6 +248,7 @@ flowchart TD
 ## 6. 下一步（Dev 接手前）
 
 - **自定义问题**已有开发就绪 spec 套件：`specs/custom-questions/CUSTOM_QUESTIONS.md`（feature spec，CQ-01…06 + 测试场景）+ `specs/custom-questions/CHECK_SPEC.md`（预检子任务，CK-01…09）。所有设计决策（确认形态 / 存储 / 相似度 / 端点）已拍板，可进入开发。
-- 其余 Epic 仍按约定落成 `specs/<feature-slug>/<NAME>.md`（含 `## Acceptance Criteria` + `## Test Scenarios`，
+- **W0 地基**已有开发就绪 spec 套件：`specs/realtime-progress/EVENT_BUS_SPEC.md`（P1-1，EB-01…04）+ `specs/realtime-progress/STREAMING_SPEC.md`（P1-2，ST-01…05）。两者无待定设计项，可进入开发。
+- 其余 Epic（P1-3…P1-12）仍按约定落成 `specs/<feature-slug>/<NAME>.md`（含 `## Acceptance Criteria` + `## Test Scenarios`，
   每条 AC 1:1 映射 `features/solver/tests/` 回归用例，遵循 `specs/README.md`）。
-  **建议从 P1-1 + P1-2（地基）或 P1-3 + P1-5（痛点直击）先立 spec；P1-11/P1-12 为小修复，可紧随 W2 排期。**
+  **建议下一步从 P1-3 + P1-5（痛点直击）或 P1-11/P1-12（小修复）立 spec；P1-4/P1-6/P1-7/P1-8/P1-9/P1-10 随后。**
