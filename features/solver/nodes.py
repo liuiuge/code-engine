@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 from infrastructure.config import PROMPTS, invoke_model
 from infrastructure.constants import (
@@ -6,6 +7,7 @@ from infrastructure.constants import (
     DEFAULT_TASK_NAME,
     PromptKey,
     StateKey,
+    VERIFY_SKIP_MESSAGE,
 )
 from infrastructure.logger import trace_node, trace_node_detailed
 from infrastructure.paths import DEFAULT_GO_CODE_DIR
@@ -82,11 +84,40 @@ def code_executor_node(state: AgentState):
 
 
 @trace_node_detailed
+def code_verifier_node(state: AgentState):
+    """Run the generated code against example test cases and assert correctness.
+
+    Reuses the compiled artifact from the executor (``StateKey.CODE_PATH``) and the
+    problem ``record`` (carrying the example inputs + expected outputs). Writes
+    ``StateKey.VERIFY_RESULT`` / ``StateKey.VERIFY_DETAILS`` for downstream nodes
+    and for surfacing in the API.
+    """
+    code_path = state.get(StateKey.CODE_PATH)
+    record = state.get(StateKey.PROBLEM_RECORD)
+    mode = state.get(StateKey.VERIFY_MODE) or "assert"
+
+    if not code_path or not Path(code_path).exists():
+        return {
+            StateKey.VERIFY_RESULT: VERIFY_SKIP_MESSAGE,
+            StateKey.VERIFY_DETAILS: [],
+        }
+
+    from features.solver.verifier import verify_go_code
+
+    result = verify_go_code(code_path=code_path, record=record, mode=mode)
+    return {
+        StateKey.VERIFY_RESULT: result["verify_result"],
+        StateKey.VERIFY_DETAILS: result["verify_details"],
+    }
+
+
+@trace_node_detailed
 def code_fixer_node(state: AgentState):
     current_retry = state.get(StateKey.RETRY_COUNT, 0) + 1
     fix_prompt = PROMPTS[PromptKey.CODE_FIXER].format(
         final_output=state[StateKey.FINAL_OUTPUT],
         build_result=state[StateKey.BUILD_RESULT],
+        verify_result=state.get(StateKey.VERIFY_RESULT, ""),
     )
     # Pass the post-increment retry count so online escalation kicks in after
     # `escalate_after_retries` builds; "Hard" problems escalate on first try.

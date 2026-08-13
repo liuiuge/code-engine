@@ -4,6 +4,7 @@ from pathlib import Path
 
 from langchain_ollama import ChatOllama
 
+from infrastructure.constants import VERIFY_MODE_DEFAULT
 from infrastructure.logger import logger
 from infrastructure.paths import MODEL_CONFIG_PATH, PROMPT_DIR
 
@@ -94,6 +95,15 @@ if DEFAULT_MODEL not in MODELS:
 
 # Backward-compatible shared instance used by all nodes unless overridden.
 llm = MODELS[DEFAULT_MODEL]
+
+
+def get_verify_mode() -> str:
+    """Verification strictness: off | smoke | assert (env CODE_ENGINE_VERIFY_MODE)."""
+    mode = os.environ.get("CODE_ENGINE_VERIFY_MODE", VERIFY_MODE_DEFAULT).strip().lower()
+    if mode not in ("off", "smoke", "assert"):
+        logger.warning(f"[verify] invalid CODE_ENGINE_VERIFY_MODE '{mode}', using '{VERIFY_MODE_DEFAULT}'")
+        return VERIFY_MODE_DEFAULT
+    return mode
 
 
 def get_llm(name: str | None = None) -> ChatOllama:

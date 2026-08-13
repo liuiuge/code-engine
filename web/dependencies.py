@@ -15,6 +15,10 @@ from pathlib import Path
 
 import os
 
+from infrastructure.constants import (
+    VERIFY_FAIL_PREFIX,
+    VERIFY_PASS_MESSAGE,
+)
 from infrastructure.paths import (
     DEFAULT_GO_CODE_DIR,
     DEFAULT_PROBLEMS_DIR,
@@ -160,6 +164,27 @@ def _resolve_go_code_folder(task_name: str) -> Path | None:
 # --------------------------------------------------------------------------- #
 # Go-code summaries
 # --------------------------------------------------------------------------- #
+def _read_verify_result(folder: Path) -> tuple[bool | None, str | None]:
+    """Read the verification sidecar written next to generated code, if present.
+
+    Returns ``(verified, verify_result)`` where ``verified`` is True/False on a
+    real check, or None when no verification was performed.
+    """
+    sidecar = folder / "verify_result.json"
+    if not sidecar.exists():
+        return None, None
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+    except Exception:
+        return None, None
+    result = data.get("verify_result") or ""
+    if result == VERIFY_PASS_MESSAGE:
+        return True, result
+    if result.startswith(VERIFY_FAIL_PREFIX):
+        return False, result
+    return None, result or None
+
+
 def _go_code_summary(go_path: Path, problem_map: dict | None = None) -> "GoCodeSummary":
     from web.schemas import GoCodeSummary
 
@@ -171,6 +196,7 @@ def _go_code_summary(go_path: Path, problem_map: dict | None = None) -> "GoCodeS
     except Exception:
         text = ""
     m = problem_map if problem_map is not None else _problem_norm_map()
+    verified, verify_result = _read_verify_result(folder)
     return GoCodeSummary(
         task_name=task_name,
         file=go_path.name,
@@ -179,6 +205,7 @@ def _go_code_summary(go_path: Path, problem_map: dict | None = None) -> "GoCodeS
         modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
         line_count=text.count("\n") + 1 if text else 0,
         related_problem=m.get(_norm_key(task_name)),
+        verified=verified,
     )
 
 
@@ -190,4 +217,5 @@ def _go_code_detail(go_path: Path):
         content = go_path.read_text(encoding="utf-8")
     except Exception:
         content = ""
-    return GoCodeDetail(**s.model_dump(), content=content)
+    _, verify_result = _read_verify_result(go_path.parent)
+    return GoCodeDetail(**s.model_dump(), content=content, verify_result=verify_result)

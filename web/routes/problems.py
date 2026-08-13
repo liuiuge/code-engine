@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
+from infrastructure.constants import VERIFY_PASS_MESSAGE
 from features.problems.service import (
     fetch_live_problem,
     fetch_problem_detail,
@@ -298,6 +299,7 @@ def _do_generate(identifier: str) -> GenerateResult:
         except Exception:
             content = None
 
+    verify_result = res.get("verify_result", "")
     return GenerateResult(
         identifier=identifier,
         task_name=res.get("task_dir"),
@@ -306,6 +308,9 @@ def _do_generate(identifier: str) -> GenerateResult:
         success=success,
         category=res.get("category"),
         content=content,
+        verified=verify_result == VERIFY_PASS_MESSAGE,
+        verify_result=verify_result,
+        verify_details=res.get("verify_details") or [],
     )
 
 

@@ -43,6 +43,7 @@ class GoCodeSummary(BaseModel):
     modified_at: str = ""
     line_count: int = 0
     related_problem: str | None = None  # problem slug, best-effort
+    verified: bool | None = None  # None = not checked / no test data
 
 
 class GoCodeDetail(BaseModel):
@@ -54,6 +55,8 @@ class GoCodeDetail(BaseModel):
     line_count: int = 0
     related_problem: str | None = None
     content: str = ""
+    verified: bool | None = None
+    verify_result: str | None = None
 
 
 class Stats(BaseModel):
@@ -122,3 +125,6 @@ class GenerateResult(BaseModel):
     category: str | None = None
     content: str | None = None
     error: str | None = None
+    verified: bool = False
+    verify_result: str = ""
+    verify_details: list = []
