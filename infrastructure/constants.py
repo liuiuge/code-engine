@@ -30,6 +30,8 @@ class PromptKey:
     CODE_GENERATOR = "code_generator"
     GENERAL_ASSISTANT = "general_assistant"
     CODE_FIXER = "code_fixer"
+    # Precheck: Agent-based dedup judgment for custom (non-LeetCode) questions.
+    PROBLEM_MATCH = "problem_match"
 
 
 class Category:

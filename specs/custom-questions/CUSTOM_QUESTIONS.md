@@ -136,6 +136,11 @@ flowchart TD
   - `GET  /api/custom-questions/{number}`：按编号打开/复用已有记录。
   - **确认步骤**：命中已有 problem 时，前端进入「需确认」态；用户决策经 `POST /api/custom-questions/confirm`
     （复用 | 不相关）回传。预检/确认作为 custom-questions 的**子资源**，与阶段一 W1 的 Job「待确认」态兼容（confirm 解析后启动 Job）。
+- **前端形态（已排期，原 `[scope expansion]` 已解除）**：新增独立的「自定义题目」tab（第三个 tab，与「题目」「Go 代码」并列），
+  含自由文本输入表单 + **内嵌确认面板**（**非模态弹窗** —— 原「前端确认弹窗 UI」措辞已修订）+ 列表 + 详情。
+  完整设计、AC（`CU-01…CU-18`）、测试场景与真实 API 契约见 → **`specs/custom-questions/CUSTOM_QUESTIONS_UI.md`**。
+  > 补记：本 spec 与 `CHECK_SPEC.md` 早期仅把「确认弹窗 UI」列为延后项，**未规划「自由文本输入表单」本身**，
+  > 导致后端交付后 UI 端零入口（需求链断裂）。该遗漏由 `CUSTOM_QUESTIONS_UI.md` §1.3 记录并补齐。
 - 与 LeetCode 题目的边界：自定义问题列表/详情**不**进入 `/api/problems` 默认列表与 `problems_index.json`，
   仅在显式按 `source=custom` 查询时出现 —— 与 CQ-04 存储决策一致。
 

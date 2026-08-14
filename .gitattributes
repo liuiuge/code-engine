@@ -1,0 +1,18 @@
+# Normalize line endings repo-wide to eliminate CRLF/LF false positives in `git status`.
+# Root cause of the ~45 spurious "M" files seen during custom-questions development
+# (core.autocrlf=true on Windows made git flag byte-identical files as modified).
+* text=auto
+
+# Force LF for sources with LF-sensitive tooling (gofmt, bash).
+*.go text eol=lf
+*.sh text eol=lf
+
+# Binary assets: store bytes exactly, never normalize line endings.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

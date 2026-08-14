@@ -62,6 +62,7 @@ routing:
     code_generator: local
     code_fixer: local
     general_assistant: local      # brief answers; flip to 'minimax' if you want online quality
+    problem_match: local          # dedup precheck: cheap yes/no JSON judgment, keep on local
 
   escalate_after_retries: 1       # after 1 failed build, switch coder/fixer to online
   escalate_to: minimax

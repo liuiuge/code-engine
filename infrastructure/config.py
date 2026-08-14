@@ -28,6 +28,7 @@ try:
         "general_assistant": (PROMPT_DIR / "general_assistant.md").read_text(encoding="utf-8"),
         "code_fixer": (PROMPT_DIR / "code_fixer.md").read_text(encoding="utf-8"),
         "task_summarizer": (PROMPT_DIR / "task_summarizer.md").read_text(encoding="utf-8"),
+        "problem_match": (PROMPT_DIR / "problem_match.md").read_text(encoding="utf-8"),
     }
 except FileNotFoundError as e:
     raise RuntimeError(f"load prompts failed，please check the path: {e}")

@@ -20,7 +20,7 @@ from features.problems.service import (
     problem_to_input,
     resolve_problem,
 )
-from features.solver.service import generate_for_problem, run_pipeline
+from features.solver.service import generate_for_problem, generate_for_query, run_pipeline
 from infrastructure.logger import logger
 
 # Default example problem, kept for backward compatibility.
@@ -124,10 +124,28 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Do not fetch from LeetCode if the problem is not found locally.",
     )
     parser.add_argument(
+        "--no-confirm", action="store_true",
+        help="(custom questions) skip the dedup confirmation step and create a "
+             "new custom question directly. Default for headless CLI use.",
+    )
+    parser.add_argument(
         "--list-problems", action="store_true",
         help="List cached problems and exit.",
     )
     return parser
+
+
+def _print_result(result: dict, number: str | None = None) -> None:
+    """Render a pipeline result dict to the log."""
+    if number:
+        logger.info(f">>> custom question number: {number}")
+    if result.get("category") == "coding":
+        logger.info(f"save code to: {result.get('code_path')}")
+        logger.info(f"compile check result:\n{result.get('build_result')}")
+        if result.get("verify_result"):
+            logger.info(f"verify result: {result.get('verify_result')}")
+    else:
+        logger.info(result.get("final_output"))
 
 
 if __name__ == "__main__":
@@ -135,6 +153,26 @@ if __name__ == "__main__":
 
     if args.list_problems:
         _print_problem_list(args.problems_dir)
+        raise SystemExit(0)
+
+    # Custom (free-text) questions go through the unified custom flow, which
+    # performs the dedup precheck and persists a custom record (CQ-01..06).
+    if args.custom is not None:
+        logger.info(">>> start workflow (custom question)...")
+        logger.info(f"\n[system log] input question:\n{args.custom}")
+        outcome = generate_for_query(
+            args.custom,
+            problems_dir=args.problems_dir,
+            no_confirm=args.no_confirm,
+        )
+        if outcome.get("needs_confirm"):
+            logger.info("\n--- confirmation required ---")
+            logger.info(f"Matched existing problem: {outcome.get('matched_slug')}")
+            logger.info(f"Reason: {outcome.get('reason')}")
+            logger.info("Re-run with --no-confirm to create a new custom question, "
+                        "or confirm reuse via the API.")
+            raise SystemExit(0)
+        _print_result(outcome.get("result"), outcome.get("number"))
         raise SystemExit(0)
 
     logger.info(">>> start workflow...")
@@ -146,8 +184,4 @@ if __name__ == "__main__":
     result = run_pipeline(input_question, difficulty, leetcode_slug)
 
     logger.info("\n--- final output ---")
-    if result.get("category") == "coding":
-        logger.info(f"save code to: {result.get('code_path')}")
-        logger.info(f"compile check result:\n{result.get('build_result')}")
-    else:
-        logger.info(result.get("final_output"))
+    _print_result(result)

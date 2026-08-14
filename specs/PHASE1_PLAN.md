@@ -170,13 +170,16 @@ SSE 可以直接挂在现有 `asyncio.to_thread(_do_generate)` 之上、由事�
 - **范围**：见独立 feature spec **`specs/custom-questions/CUSTOM_QUESTIONS.md`**（含完整 AC + 测试场景 + 设计决策）。
   要点：(1) `classifier` 路由编程→原代码路径、非编程→问答；(2) `task_summary` 比对已有 problem 列表，
   命中则发「确认」请求，用户确认不相关才走自定义路径；(3) 自定义问题与 LeetCode **分开保存**（独立目录 + `source:"custom"`）。
-- **改动点**：`features/solver/{nodes,service}.py`（classifier/task_summary 职责）、`features/problems/storage.py` + `infrastructure/paths.py`（自定义写入路径）、`web/`（自定义输入 + 确认接口 + 前端弹窗）。
+- **改动点**：`features/solver/{nodes,service}.py`（classifier/task_summary 职责）、`features/problems/storage.py` + `infrastructure/paths.py`（自定义写入路径）、`web/`（自定义输入 + 确认接口）、`frontend/index.html`（「自定义题目」tab + 内嵌确认面板，**非模态弹窗**）。
 - **AC**：对应 `CQ-01 … CQ-06`（见 feature spec）。
 - **依赖**：`classifier`/`task_summary` 节点（已存在）；W1 的 SSE/异步 Job（CQ-03 管线前预检，需 Job 状态机承载「待确认」态）。**工作量：L**。
 - **决策（user 已拍板，见 feature spec §6）**：确认形态=(a)管线前预检；存储=(A)独立目录 `output/custom-questions/`；
   相似度=由 Agent(LLM) 判断（不做独立字符串算法）；非已存在时新建并编号（`C-<seq>`）。
   端点形态已定 = **独立 `/api/custom-questions`**（list/create/open-by-number + precheck/confirm 子资源），用户判断独立端点更易管理与复用；
-  其与阶段一 W1 的 Job「待确认」态兼容，Web 层细化留 W2。
+  其与阶段一 W1 的 Job「待确认」态兼容。
+- **前端 UI（已排期）**：「自定义题目」tab + 输入表单 + 内嵌确认面板 + 列表/详情，
+  AC `CU-01…CU-18` 见 **`specs/custom-questions/CUSTOM_QUESTIONS_UI.md`**（分支 `feat/custom-questions-ui`）。
+  注：后端已交付，但早期 spec 未规划「输入表单」本身，UI 端一度零入口；该遗漏已在 UI spec §1.3 记录并补齐。
 
 ---
 
@@ -240,7 +243,8 @@ flowchart TD
 | SSE 断开/重连 | P1-3/6 | 客户端容忍；终态存 job/store，断线可恢复 |
 | 本地模型 token 速率仍慢 | P1-2/5/9 | typewriter 改善感知但非原始延迟，须配 P1-9 默认模型调优 |
 | 取消安全（孤儿进程） | P1-4 | 确保 go 子进程与模型请求可终止，pgrep 验证无残留 |
-| 自定义确认交互形态 | P1-13 | 确认形态(a/b)、存储布局、相似度算法均标 `[scope expansion]`，需 user 拍板后再开发（见 feature spec §6/§8） |
+| 自定义确认交互形态 | P1-13 | **已全部拍板**：确认形态=(a)管线前预检、存储=(A)独立目录、相似度=Agent(LLM) 判断（见 feature spec §6/§8）；前端形态=输入 tab + 内嵌确认面板（见 `custom-questions/CUSTOM_QUESTIONS_UI.md` §5 D1-D8）。原 `[scope expansion]` 已解除 |
+| 后端交付但 UI 无入口 | P1-13 | **已发生并已识别**：后端 5 端点全绿，但早期 spec 未规划「输入表单」本身 → UI 端零入口。缓解：`CUSTOM_QUESTIONS_UI.md` 补齐 CU-01…CU-18；后续新特性须同时规划「用户可达入口」，避免只验收后端 |
 | 过度工程 | 排序 | W1 痛点不必等 W2 异步 Job（见 §1 决策） |
 
 ---
