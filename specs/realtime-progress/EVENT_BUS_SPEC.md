@@ -118,3 +118,17 @@ flowchart TD
 - 注意：`trace_node` 被 7 个节点使用（见 `features/solver/workflow.py` 注册名），改动需确保 7 处均被包裹并正确 emit；`general_assistant_node`（非编程）路径也应 emit，保证非编程问答也有进度。
 - 注意：`bus.emit` 首版同步遍历 handlers，不要在其中做阻塞 IO；SSE/Job 订阅在 W1/W2 接入，届时若需异步可改队列。
 - 注意：保留现有文本日志（`🟢/🔴`），本任务只「加」emit，不「删」日志。
+
+---
+
+## 7. 人类校验指引（Manual Acceptance）
+
+除 `features/solver/tests/test_event_bus_regression.py` 的回归测试外，每条 AC 须可由人类按以下步骤手动验收。
+**环境**：`uvicorn web.main:app --port 8000` 启动，盯着 uvicorn 终端日志；浏览器开 `/ui` 跑一次生成（或 `python -m features.solver.cli` 生成）。
+
+| AC | 人类校验步骤 | 通过判定 | 失败判定 |
+|----|------------|---------|---------|
+| EB-01 | 跑一次 coding 题生成 → 看终端日志 `NODE_START`/`NODE_END` 序列 | 节点名成对、按执行顺序、每个 `NODE_END` 含耗时 | 缺节点/乱序/无 duration |
+| EB-02 | 临时制造节点异常（如改坏 go 模板致编译失败）→ 跑生成 | 日志出现 `NODE_ERROR` 且生成最终返回失败（异常向上传播） | 无 NODE_ERROR / 异常被吞 |
+| EB-03 | 代码审查：`grep -rn "bus.emit" features infrastructure web` | 仅 `infrastructure/events.py` 一处 emit 进度事件（文本 logger 不算第二套） | 多处手写事件实现 |
+| EB-04 | 跑一次含本地超时升级在线的生成 → 看事件 data | 进度/日志 data 含 `used_model` 与 `escalated` 字段 | 字段缺失 |

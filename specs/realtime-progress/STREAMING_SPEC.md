@@ -119,3 +119,18 @@ flowchart TD
 - 注意：绝不能因开启流式而让调用「挂死超过 budget」——这是本任务核心验收（ST-02）；worker 线程 `shutdown(wait=False)` 与现有 `invoke` 分支策略保持一致。
 - 注意：升级重试同样须受 online 的 budget 守护（复用 `_TIMEOUT_BY_OLLAMA_MODEL`）。
 - 注意：`on_token` 默认 `None`，保证 P1-2 可脱离 P1-1 独立单测；集成时的 token 事件由节点层传入（见 §3.3）。
+
+---
+
+## 7. 人类校验指引（Manual Acceptance）
+
+除 `features/solver/tests/test_streaming_regression.py` 的回归测试外，每条 AC 须可由人类按以下步骤手动验收。
+**环境**：`uvicorn` 启动 + `/ui` 跑生成（或用 `python` 直接调 `invoke_model_stream` 观察）。重点观察「是否挂死」「是否升级」「终态是否一致」。
+
+| AC | 人类校验步骤 | 通过判定 | 失败判定 |
+|----|------------|---------|---------|
+| ST-01 | 经 UI 生成（或调 `invoke_model_stream`）→ 观察首个 token 是否早于完整文本 | 首个 token 在总时长前到达（前端可看到代码区先动） | 等全部内容才一次性出现 |
+| ST-02 | 把 local 模型 budget 设极小（如 0.01s）→ 跑生成 → 看 ollama/online 日志与终态 | 在 budget 内中断并升级到 online 拿到结果，不挂死 | 不中断/不升级/进程挂死超 budget |
+| ST-03 | 同一题分别用流式与降级（非流式）各跑一次 → 比对生成结果与编译/验证 | 两次终态一致（无字符截断/重复） | 结果不一致 |
+| ST-04 | 模型/配置标记 `stream: false` → 跑生成 | 仍分块产出完整文本、不抛 `NotImplementedError` | 抛错/无输出 |
+| ST-05 | 集成时传入 `on_token` 收集 → 看总线/日志 token 事件数 | 回调调用次数 == yield token 数、顺序一致 | 未调用/计数不符 |
