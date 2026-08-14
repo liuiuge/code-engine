@@ -128,3 +128,56 @@ class GenerateResult(BaseModel):
     verified: bool = False
     verify_result: str = ""
     verify_details: list = []
+
+
+# --------------------------------------------------------------------------- #
+# Custom questions (P1-13)
+# --------------------------------------------------------------------------- #
+class CustomPrecheckRequest(BaseModel):
+    """Body for POST /api/custom-questions/precheck."""
+    text: str = Field(..., description="Free-text question to dedup-check against local problems.")
+    problems_dir: str | None = Field(None, description="Override problems dir (testing).")
+
+
+class CustomPrecheckResult(BaseModel):
+    status: str  # "match" | "no_match"
+    matched_slug: str | None = None
+    reason: str = ""
+
+
+class CustomCreateRequest(BaseModel):
+    """Body for POST /api/custom-questions (new custom question)."""
+    text: str = Field(..., description="Free-text question.")
+    no_confirm: bool = Field(
+        False, description="Skip confirmation and create directly (headless/CLI behavior)."
+    )
+    problems_dir: str | None = Field(None, description="Override problems dir (testing).")
+
+
+class CustomConfirmRequest(BaseModel):
+    """Body for POST /api/custom-questions/confirm."""
+    text: str = Field(..., description="Original free-text question.")
+    decision: str = Field(..., description="'reuse' (open matched) or 'not_related' (new).")
+    matched_slug: str | None = Field(None, description="Slug of the matched problem (for reuse).")
+    problems_dir: str | None = Field(None, description="Override problems dir (testing).")
+
+
+class CustomQuestionSummary(BaseModel):
+    number: str
+    source: str = "custom"
+    created_at: str = ""
+    category: str | None = None
+    task_dir: str | None = None
+    has_code: bool = False
+    title: str = ""
+
+
+class CustomGenerateResult(BaseModel):
+    status: str  # "created" | "needs_confirm" | "reused" | "leetcode"
+    number: str | None = None
+    needs_confirm: bool = False
+    matched_slug: str | None = None
+    reason: str = ""
+    input: str | None = None
+    result: dict | None = None
+    record: dict | None = None

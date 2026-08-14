@@ -12,7 +12,8 @@
 本 spec 只覆盖「**管线前预检 + Agent 去重判断 + 新建编号存储**」这一子任务，不含：
 
 - 实际代码生成 / 编译 / 验证质量（属既有管线）。
-- 前端「确认」弹窗 UI（属 Web 层，端点形态仍 `[scope expansion]`，见 CUSTOM_QUESTIONS §6.3）。
+- 前端输入 tab + 内嵌确认面板（属 Web/前端层，**已排期、原 `[scope expansion]` 已解除**，
+  见 `specs/custom-questions/CUSTOM_QUESTIONS_UI.md` 与 CUSTOM_QUESTIONS §6.3）。
 - classifier 路由编程/非编程（既有，本任务仅消费其结果）。
 
 ### 要做什么

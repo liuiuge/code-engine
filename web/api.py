@@ -19,7 +19,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from web.dependencies import FRONTEND_DIR
-from web.routes import go_code, meta, problems
+from web.routes import custom_questions, go_code, meta, problems
 
 
 def create_app() -> FastAPI:
@@ -41,6 +41,7 @@ def create_app() -> FastAPI:
     app.include_router(meta.router)
     app.include_router(problems.router)
     app.include_router(go_code.router)
+    app.include_router(custom_questions.router)
 
     @app.get("/", include_in_schema=False)
     def root():

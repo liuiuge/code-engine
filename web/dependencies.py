@@ -20,6 +20,7 @@ from infrastructure.constants import (
     VERIFY_PASS_MESSAGE,
 )
 from infrastructure.paths import (
+    DEFAULT_CUSTOM_QUESTIONS_DIR,
     DEFAULT_GO_CODE_DIR,
     DEFAULT_PROBLEMS_DIR,
     PROJECT_ROOT,
@@ -28,6 +29,9 @@ from infrastructure.paths import (
 # Overridable via env for non-standard layouts.
 PROBLEMS_DIR = Path(os.environ.get("CODE_ENGINE_PROBLEMS_DIR", str(DEFAULT_PROBLEMS_DIR)))
 GO_CODE_DIR = Path(os.environ.get("CODE_ENGINE_GO_CODE_DIR", str(DEFAULT_GO_CODE_DIR)))
+CUSTOM_QUESTIONS_DIR = Path(
+    os.environ.get("CODE_ENGINE_CUSTOM_QUESTIONS_DIR", str(DEFAULT_CUSTOM_QUESTIONS_DIR))
+)
 FRONTEND_DIR = Path(os.environ.get("CODE_ENGINE_FRONTEND_DIR", str(PROJECT_ROOT / "frontend")))
 
 

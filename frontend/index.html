@@ -51,6 +51,11 @@
     font-size: 13px; background: #fff; color: var(--text); min-width: 0;
   }
   .toolbar input[type="number"] { width: 72px; }
+  .toolbar textarea {
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+    font-size: 13px; background: #fff; color: var(--text); width: 100%;
+    font-family: inherit; resize: vertical; min-height: 84px; line-height: 1.5;
+  }
   .toolbar input.search { flex: 1 1 220px; }
   .toolbar label { color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; gap: 5px; }
   button.btn {
@@ -119,6 +124,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="problems">题目</button>
     <button class="tab" data-tab="gocode">Go 代码</button>
+    <button class="tab" data-tab="custom">自定义题目</button>
   </div>
 </header>
 
@@ -164,6 +170,23 @@
     </div>
     <div id="gocode-list"></div>
     <div class="pager" id="gocode-pager"></div>
+  </section>
+
+  <!-- CUSTOM QUESTIONS -->
+  <section id="view-custom" class="view">
+    <div class="toolbar" style="flex-direction:column; align-items:stretch">
+      <textarea id="c-text" placeholder="用 Go 实现 LRU Cache / 解释 TCP 三次握手"></textarea>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:8px">
+        <label style="color:var(--muted); font-size:12px; display:inline-flex; align-items:center; gap:5px">
+          <input type="checkbox" id="c-no-confirm" /> 跳过查重确认，直接新建
+        </label>
+        <button class="btn" id="c-submit">提交</button>
+        <button class="btn ghost" id="c-precheck">仅试查重</button>
+        <span id="c-status" class="meta"></span>
+      </div>
+    </div>
+    <div id="custom-list"></div>
+    <div id="custom-confirm"></div>
   </section>
 
   <!-- DETAIL -->
@@ -289,7 +312,7 @@ function renderMarkdown(md) {
 
 /* ---------- views ---------- */
 function showView(name) {
-  ['problems', 'gocode', 'detail'].forEach(v => $('view-' + v).classList.toggle('active', v === name));
+  ['problems', 'gocode', 'custom', 'detail'].forEach(v => $('view-' + v).classList.toggle('active', v === name));
 }
 function setTabs(active) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === active));
@@ -459,6 +482,168 @@ $('detail-back').addEventListener('click', () => {
   showView(active);
 });
 
+/* ---------- custom questions (P1-13) ----------
+ * Single-submit flow: POST /api/custom-questions already runs the dedup
+ * precheck internally, so we submit once and branch on `status`
+ * (created | needs_confirm | reused | leetcode). The /precheck endpoint is
+ * only an optional "try dedup" button and never enters the submit path.
+ */
+async function loadCustom() {
+  const list = $('custom-list');
+  list.innerHTML = '<div class="spinner">加载中…</div>';
+  try {
+    const data = await api('/api/custom-questions');  // bare array, no envelope
+    list.innerHTML = '';
+    if (!data.length) {
+      list.innerHTML = '<div class="empty">还没有自定义题目，在上方输入框提交一个。</div>';
+      return;
+    }
+    data.forEach(r => {
+      const card = el('div', 'card');
+      const tag = r.category ? '<span class="tag">' + esc(r.category) + '</span>' : '';
+      const pill = r.has_code ? '<span class="pill go">有 Go 代码</span>' : '';
+      card.innerHTML =
+        '<div class="row1"><span class="title">' + esc(r.title) + '</span>' + pill +
+        '<span class="meta"># ' + esc(r.number) + ' · ' + esc(r.created_at) + '</span></div>' +
+        (tag ? '<div style="margin-top:6px">' + tag + '</div>' : '');
+      card.addEventListener('click', () => openCustom(r.number));
+      list.appendChild(card);
+    });
+  } catch (e) {
+    list.innerHTML = '<div class="err">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+
+async function openCustom(number) {
+  showView('detail');
+  const c = $('detail-content');
+  c.innerHTML = '<div class="spinner">加载中…</div>';
+  try {
+    const rec = await api('/api/custom-questions/' + encodeURIComponent(number));
+    const tag = rec.category ? ' · <span class="tag">' + esc(rec.category) + '</span>' : '';
+    let goTask = null;
+    let html = '<div class="detail"><h2>' + esc(rec.input_question || rec.number) + '</h2>' +
+      '<div class="meta"># ' + esc(rec.number) + ' · ' + esc(rec.created_at) + tag + '</div>';
+    if (rec.code_path) {
+      // 编程题：渲染编译结果 + best-effort 跳转 Go 代码
+      // (task_dir is the go-code folder name, so it equals basename(task_dir))
+      html += '<div class="block"><h3>编译结果（build_result）</h3><pre class="code"><code>' +
+        esc(rec.build_result || '') + '</code></pre></div>';
+      goTask = rec.task_dir || (rec.code_path.split('/').slice(-2, -1)[0] || '');
+      if (goTask) {
+        html += '<div class="block"><button class="btn" id="c-to-gocode">查看生成的 Go 代码 →</button></div>';
+      }
+    } else {
+      // 非编程题：仅渲染 final_output，绝不渲染空编译区块
+      html += '<div class="block md">' + renderMarkdown(rec.final_output) + '</div>';
+    }
+    html += '</div>';
+    c.innerHTML = html;
+    const tg = $('c-to-gocode');
+    if (tg) tg.addEventListener('click', () => openGoCode(goTask));
+  } catch (e) {
+    c.innerHTML = '<div class="err">加载失败：' + esc(e.message) + '</div>';
+  }
+}
+
+function renderConfirmPanel(text, res) {
+  const host = $('custom-confirm');
+  const slug = res.matched_slug;
+  let html = '<div class="card"><div class="block"><h3>发现相似题目，是否复用？</h3>';
+  if (slug) {
+    html += '<div class="row1"><span class="meta">匹配：</span><a href="#" id="c-match">' + esc(slug) + '</a></div>';
+  }
+  if (res.reason) html += '<p class="meta">' + esc(res.reason) + '</p>';
+  html += '<div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap">' +
+    '<button class="btn" id="c-reuse">复用这道题</button>' +
+    '<button class="btn ghost" id="c-new">不相关，新建</button>' +
+    '<button class="btn ghost" id="c-cancel">取消</button>' +
+    '</div></div>';
+  host.innerHTML = html;
+  const match = $('c-match');
+  if (match) match.addEventListener('click', (ev) => { ev.preventDefault(); if (slug) openProblem(slug); });
+  $('c-reuse').addEventListener('click', () => resolveConfirm(text, 'reuse', slug));
+  $('c-new').addEventListener('click', () => resolveConfirm(text, 'not_related', null));
+  $('c-cancel').addEventListener('click', () => {
+    host.innerHTML = '';
+    $('c-status').textContent = '已取消。';
+  });
+}
+
+async function resolveConfirm(text, decision, slug) {
+  $('c-status').textContent = '处理中…';
+  try {
+    const body = { text: text, decision: decision };
+    if (slug) body.matched_slug = slug;
+    const res = await apiPost('/api/custom-questions/confirm', body);
+    $('custom-confirm').innerHTML = '';
+    if (decision === 'reuse') {
+      $('c-status').textContent = '已复用：' + (slug || '');
+      if (slug) openProblem(slug);
+    } else {
+      $('c-status').textContent = '已创建：' + (res.number || '');
+      await loadCustom();
+      if (res.number) openCustom(res.number);
+    }
+  } catch (e) {
+    $('c-status').textContent = '失败：' + e.message;
+  }
+}
+
+async function submitCustom() {
+  const text = $('c-text').value.trim();
+  if (!text) {
+    $('c-status').textContent = '请输入题目内容后再提交。';
+    return;
+  }
+  const btn = $('c-submit');
+  btn.disabled = true;
+  $('c-status').textContent = '查重 → 生成 → 编译中，可能需要数十秒…';
+  try {
+    const res = await apiPost('/api/custom-questions', {
+      text: text,
+      no_confirm: $('c-no-confirm').checked,
+    });
+    btn.disabled = false;
+    // 单次提交、按 status 分流（前端不先调 /precheck）
+    if (res.status === 'needs_confirm') {
+      renderConfirmPanel(text, res);
+    } else if (res.status === 'created') {
+      $('c-status').textContent = '已创建：' + (res.number || '');
+      await loadCustom();
+      if (res.number) openCustom(res.number);
+    } else if (res.status === 'reused') {
+      $('c-status').textContent = '已复用：' + (res.matched_slug || '');
+      if (res.matched_slug) openProblem(res.matched_slug);
+    } else if (res.status === 'leetcode') {
+      $('c-status').textContent = '已按 LeetCode 题目处理。';
+    } else {
+      $('c-status').textContent = '未知状态：' + (res.status || '');
+    }
+  } catch (e) {
+    btn.disabled = false;
+    $('c-status').textContent = '失败：' + e.message;
+  }
+}
+
+async function precheckCustom() {
+  const text = $('c-text').value.trim();
+  if (!text) {
+    $('c-status').textContent = '请输入题目内容后再试查重。';
+    return;
+  }
+  $('c-status').textContent = '查重中…';
+  try {
+    const res = await apiPost('/api/custom-questions/precheck', { text: text });
+    let msg = '查重状态：' + res.status;
+    if (res.matched_slug) msg += ' · 匹配 ' + res.matched_slug;
+    if (res.reason) msg += ' · ' + res.reason;
+    $('c-status').textContent = msg;
+  } catch (e) {
+    $('c-status').textContent = '查重失败：' + e.message;
+  }
+}
+
 /* ---------- init ---------- */
 (async function init() {
   await loadTags();
@@ -494,7 +679,13 @@ $('detail-back').addEventListener('click', () => {
   });
   $('p-pull-slug').addEventListener('keydown', e => { if (e.key === 'Enter') $('p-pull-one').click(); });
 
+  // custom questions
+  $('c-submit').addEventListener('click', submitCustom);
+  $('c-precheck').addEventListener('click', precheckCustom);
+  $('c-text').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitCustom(); });
+
   loadProblems();
+  loadCustom();
 })();
 </script>
 </body>
