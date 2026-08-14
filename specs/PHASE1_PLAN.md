@@ -16,17 +16,39 @@
 
 ## 1. 切分：4 个 Wave（按依赖排序）
 
-| Wave | 主题 | Epic | 为什么在这 |
-|------|------|------|-----------|
-| **W0 地基** | 解耦 / 可流式 | P1-1 事件总线、P1-2 流式调用 | 解锁所有用户可见项的前提，可并行 |
-| **W1 痛点直击** | 等待体验 | P1-3 SSE、P1-4 取消、P1-5 前端面板 | **直接消灭「时间长/没事干」** |
-| **W2 可靠** | 异步 / 健壮 / 可观测 / 数据正确 | P1-6 异步 Job、P1-7 部分结果+友好失败、P1-8 可观测、**P1-11 拉题续拉修复**、**P1-12 详情 markdown 渲染修复**、**P1-13 自定义问题**（见 `specs/custom-questions/CUSTOM_QUESTIONS.md`） | 让服务不卡、出错不崩、数据不重复、显示正确 |
-| **W3 交付 / 性能** | 部署 / 调优 | P1-9 默认模型调优+多解误判、P1-10 docker 一键部署 | 缩短原始耗时、一键可用 |
+| Wave | 主题 | Epic（含前后端标注） | 前后端同波？ | 为什么在这 |
+|------|------|----------------------|------------|-----------|
+| **W0 地基** | 解耦 / 可流式 | P1-1 事件总线(BE)、P1-2 流式调用(BE) | ✅ 纯后端 | 解锁所有用户可见项的前提，可并行 |
+| **W1 痛点直击** | 等待体验 | P1-3 SSE(BE)、P1-4 取消(BE+FE停止按钮)、P1-5 前端面板(FE) | ✅ 同波 | **直接消灭「时间长/没事干」**；FE/BE 同波交付验收 |
+| **W2 可靠** | 异步/健壮/可观测/数据正确 | P1-6 异步Job(BE)、P1-7 部分结果(BE)、P1-8 可观测(BE)+**P1-8FE 字段展示(FE)**、P1-11 拉题续拉(BE)、P1-12 markdown(BE，方案A)、**P1-13 自定义问题(BE+FE tab/确认)** | ⚠️ 已修 | 服务不卡、出错不崩、数据不重复、显示正确；P1-8FE/P1-13FE 与各自 BE 同波验收 |
+| **W3 交付/性能** | 部署/调优 | **P1-9 模型调优(BE)+P1-9FE 速度/质量开关(FE)**、P1-10 docker(BE) | ⚠️ 已修 | 缩短原始耗时、一键可用；P1-9FE 与 BE 同波验收 |
 
 **关键排序决策（重要）**：W1 的「SSE 痛点」**不必等 W2 的异步 Job 化**。
 SSE 可以直接挂在现有 `asyncio.to_thread(_do_generate)` 之上、由事件总线驱动——
 先做 W0+W1 即可解决用户痛点，W2 是可靠性增强、紧随其后即可。
 这避免了「为了一个小体验改动先搭一整套 Job 基建」的过度工程。
+
+### 1.1 前后端同波验收矩阵（PM 出口质量红线）
+
+> 原则：一个 feature 的前端与后端**必须排进同一 Wave、同一交付批次**，使其可端到端一次验收；
+> 禁止「后端先交付、前端另开分支后补」导致人工只能做半截验收（见 P1-13 历史教训）。
+> 下表为 2026-08-14 复核结果：发现 3 处前后端脱钩，已全部重排。
+
+| Epic | 前端归属 | 后端归属 | 同波 | 复核结论 / 动作 |
+|------|---------|---------|------|---------------|
+| P1-1 事件总线 | — | `infrastructure/events.py`、`features/solver/*`、`infrastructure/logger.py` | ✅ | 纯后端，无前端 |
+| P1-2 流式调用 | — | `infrastructure/config.py`、`constants.py` | ✅ | 纯后端 |
+| P1-3 SSE | —（驱动 P1-5） | `web/routes/stream.py`、`web/api.py`、`web/schemas.py` | ✅ | 后端端点，验收靠 P1-5 面板 |
+| P1-4 取消 | `frontend/`（停止按钮） | `features/solver/service.py`、`executor.py`、`config.py` | ✅ W1 | FE/BE 同波，AT-C1~C3 含前端行为 |
+| P1-5 前端面板 | `frontend/index.html` | （由 P1-3/4 供数） | ✅ W1 | 依赖 P1-3/4，同波闭环 |
+| P1-6 异步Job | — | `web/`（job 路由+store）、`service.run_pipeline` | ✅ | 纯后端；前端复用 P1-5 面板订阅 job |
+| P1-7 部分结果 | — | `features/solver/service.py`、`executor.py` | ✅ | 纯后端正确性 |
+| **P1-8 可观测** | **`frontend/`（展示 `used_model`/`escalated`）** | `web/routes/meta.py`、`config.py`、`schemas.py` | ⚠️→✅ **W2** | **补 P1-8FE**：后端字段落 W2，前端展示同波验收（AT-O2「前端可展示」须有 UI 承载） |
+| P1-11 拉题续拉 | —（复用现有拉题按钮） | `features/problems/service.py`、`web/routes/problems.py` | ✅ | 纯后端正确性；AC 验证后端计数 |
+| **P1-12 markdown** | 仅方案 B 需改 `renderMarkdown` | `features/problems/models.py` | ⚠️→✅ **W2** | **锁定方案 A（生成侧剥离）**：纯后端改动，规避新增前端耦合；若改方案 B 须与前端同波 |
+| **P1-13 自定义问题** | **`frontend/index.html`（tab+输入表单+确认面板）** | `features/solver/*`、`features/problems/storage.py`、`web/`（5 端点） | ⚠️→✅ **W2** | **硬 Gate**：后端已交付，前端 UI（`feat/custom-questions-ui`）必须并入 W2 同批、E2E 验收通过方可关闭 W2；禁止「后端绿、UI 无入口」 |
+| **P1-9 模型调优** | **`frontend/`（速度/质量优先开关）** | `infrastructure/models.yaml`、`web/`、`features/solver/verifier.py` | ⚠️→✅ **W3** | **补 P1-9FE**：前端开关与后端路由/verifier 同波验收（AT-PF1 端到端耗时对比须 UI 可达） |
+| P1-10 docker | — | `deploy/`（Dockerfile、compose） | ✅ | 纯部署 |
 
 ---
 
@@ -114,6 +136,7 @@ SSE 可以直接挂在现有 `asyncio.to_thread(_do_generate)` 之上、由事�
   - AT-O1：`/health` 在 ollama 不可达或 go 缺失时返回 degraded + 原因，而非 200 假健康。
   - AT-O2：生成结果含 `used_model` 与是否 `escalated` 字段，前端可展示。
 - **依赖**：P1-1（事件含路由信息）。**工作量：S**。
+- **[前后端同波] P1-8FE（前端展示）**：`AT-O2` 的「前端可展示」必须有 UI 承载——在 P1-5 面板的终态区追加 `used_model` / `escalated` 展示（如「本次使用：local / 已升级 online」）。**P1-8FE 与 P1-8 同属 W2、同批验收**，禁止只验收后端字段而留 UI 空白。AC：终态面板可见模型来源与是否升级，与 `GenerateResult` 字段一致。
 
 ### P1-9 默认模型 / thinking 调优 + 速度质量开关 + 多解误判
 - **目标**：直接缩短「时间长」、减少空跑重生成。
@@ -123,6 +146,7 @@ SSE 可以直接挂在现有 `asyncio.to_thread(_do_generate)` 之上、由事�
   - AT-PF1：速度优先下，简单题首试用 local+关 thinking，端到端耗时低于质量优先。
   - AT-PF2：two-sum 类多解题正确解不再被判 `verified_fail`（或显式标注「多解，按规范值比对」）。
 - **依赖**：P1-8（先有路由可见）、verifier 已有基础。**工作量：M**。
+- **[前后端同波] P1-9FE（前端 速度/质量优先 开关）**：UI 提供「速度优先 / 质量优先」切换，参数透传到 `web/` 生成入口，驱动 `models.yaml` 默认路由。**P1-9FE 与 P1-9 同属 W3、同批验收**；`AT-PF1` 的端到端耗时对比须由该开关触发，UI 不可缺失。AC：切换开关后生成行为（首试 local/关 thinking vs 允许 thinking）与终态字段随开关变化。
 
 ### P1-10 docker 一键部署
 - **目标**：`docker compose up` 即用。
@@ -164,6 +188,7 @@ SSE 可以直接挂在现有 `asyncio.to_thread(_do_generate)` 之上、由事�
 - **[scope expansion: 修复形态]** 方案 A（生成侧剥离）与方案 B（前端不 esc 代码块）取舍：
   方案 A 改动小、零 XSS 风险，但代码块内强调变为纯文本；方案 B 保留视觉强调但需保证生成侧代码块内容可信。
   推荐 A，除非产品明确要求代码块内也显示粗体。
+- **[前后端同波 · 已定]** **锁定方案 A（生成侧剥离 `<strong>/<em>` 为纯文本）**：纯后端改动（`features/problems/models.py`），**不引入前端改动**，从而规避「后端修、前端另改 `renderMarkdown`」的跨波耦合风险。AC `AT-P12a/b/c` 在浏览器渲染验收，但改动点仅在后端、随 W2 同批交付。若未来改采方案 B，须将 `frontend/index.html` 改动与后端并入同一 Wave 验收。
 
 ### P1-13 自定义问题支持（开发就绪）
 - **目标**：支持任意自由文本作为问题输入，并正确路由 / 去重确认 / 独立存储。
@@ -180,6 +205,9 @@ SSE 可以直接挂在现有 `asyncio.to_thread(_do_generate)` 之上、由事�
 - **前端 UI（已排期）**：「自定义题目」tab + 输入表单 + 内嵌确认面板 + 列表/详情，
   AC `CU-01…CU-18` 见 **`specs/custom-questions/CUSTOM_QUESTIONS_UI.md`**（分支 `feat/custom-questions-ui`）。
   注：后端已交付，但早期 spec 未规划「输入表单」本身，UI 端一度零入口；该遗漏已在 UI spec §1.3 记录并补齐。
+- **[前后端同波 · 硬 Gate]** P1-13 是本次复核的**重点整改对象**：历史上是「后端 5 端点全绿、前端 UI 在独立分支无入口」，人工只能验收半截。
+  **强制要求**：P1-13 的 `feat/custom-questions-ui` 必须并入 W2 同一交付批次，且 `CU-01`（自定义题目 tab + 输入表单可达）等端到端 AC 跑通后，W2 方可关闭。
+  **禁止「后端先合、UI 后补」**——若 UI 未随后端同批验收，W2 不视为完成（见 §1.1 矩阵与 §5 风险表）。
 
 ---
 
@@ -199,19 +227,24 @@ flowchart TD
     subgraph W2[W2 可靠 · 异步/健壮/可观测/数据正确]
         P16[P1-6 异步Job]
         P17[P1-7 部分结果+友好失败]
-        P18[P1-8 可观测]
-        P111[P1-11 拉题续拉修复]
-        P112[P1-12 详情markdown修复]
-        P113[P1-13 自定义问题]
+        P18[P1-8 可观测 BE]
+        P18FE[P1-8FE 字段展示 FE]
+        P111[P1-11 拉题续拉修复 BE]
+        P112[P1-12 详情markdown修复 BE·方案A]
+        P113[P1-13 自定义问题 BE+FE 同波单元]
     end
     subgraph W3[W3 交付/性能]
-        P19[P1-9 模型调优+多解误判]
-        P110[P1-10 docker部署]
+        P19[P1-9 模型调优 BE]
+        P19FE[P1-9FE 速度/质量开关 FE]
+        P110[P1-10 docker部署 BE]
     end
     P11 --> W1
     P12 --> W1
     P13 --> P15
     P14 --> P15
+    P18 --> P18FE
+    P19 --> P19FE
+    P113 -.同波硬Gate.-> P113
     W1 --> W2
     W2 --> W3
 ```
@@ -244,7 +277,7 @@ flowchart TD
 | 本地模型 token 速率仍慢 | P1-2/5/9 | typewriter 改善感知但非原始延迟，须配 P1-9 默认模型调优 |
 | 取消安全（孤儿进程） | P1-4 | 确保 go 子进程与模型请求可终止，pgrep 验证无残留 |
 | 自定义确认交互形态 | P1-13 | **已全部拍板**：确认形态=(a)管线前预检、存储=(A)独立目录、相似度=Agent(LLM) 判断（见 feature spec §6/§8）；前端形态=输入 tab + 内嵌确认面板（见 `custom-questions/CUSTOM_QUESTIONS_UI.md` §5 D1-D8）。原 `[scope expansion]` 已解除 |
-| 后端交付但 UI 无入口 | P1-13 | **已发生并已识别**：后端 5 端点全绿，但早期 spec 未规划「输入表单」本身 → UI 端零入口。缓解：`CUSTOM_QUESTIONS_UI.md` 补齐 CU-01…CU-18；后续新特性须同时规划「用户可达入口」，避免只验收后端 |
+| 后端交付但 UI 无入口 | P1-13 | **已发生并已识别 → 已整改（2026-08-14 复核）**：后端 5 端点全绿，但早期 spec 未规划「输入表单」本身 → UI 端零入口。整改：(1) `CUSTOM_QUESTIONS_UI.md` 补齐 CU-01…CU-18；(2) **P1-13 加「前后端同波硬 Gate」**（§1.1 矩阵 + 本 Epic 标注），`feat/custom-questions-ui` 必须并入 W2 同批、CU-01 E2E 跑通方可关闭 W2；(3) 后续新特性须同时规划「用户可达入口」，避免只验收后端 |
 | 过度工程 | 排序 | W1 痛点不必等 W2 异步 Job（见 §1 决策） |
 
 ---
@@ -256,3 +289,30 @@ flowchart TD
 - 其余 Epic（P1-3…P1-12）仍按约定落成 `specs/<feature-slug>/<NAME>.md`（含 `## Acceptance Criteria` + `## Test Scenarios`，
   每条 AC 1:1 映射 `features/solver/tests/` 回归用例，遵循 `specs/README.md`）。
   **建议下一步从 P1-3 + P1-5（痛点直击）或 P1-11/P1-12（小修复）立 spec；P1-4/P1-6/P1-7/P1-8/P1-9/P1-10 随后。**
+- **[常态化规则 · 前后端同波]** 后续任何新 feature，spec 立项时即须标注「前端归属 / 后端归属 / 同波 Wave」（参照 §1.1 矩阵），
+  并把「用户可达入口」列为必须 AC（避免 P1-13 式「后端绿、UI 无入口」）。含前端的 feature，其前端子 Epic 与后端**强制同 Wave、同交付批次、同批 E2E 验收**；禁止后端先合、前端后补分支。
+
+---
+
+## 7. Spec 交付进度（PM 跟踪）
+
+> 更新于 2026-08-14。W0/W1 小修复簇已落地；P1-6/7/8/9/10 待写。
+> **格式红线**：每份 spec 须含「人类校验指引（Manual Acceptance）」一节（环境 + 每条 AC 的手动步骤/通过/失败判定），见 `specs/README.md` 约定。已交付 spec（P1-1/2/3/4/5/11/12）均已补齐。
+
+| Epic | Wave | 详细 spec 路径 | 状态 | AC 映射回归 |
+|------|------|--------------|------|-----------|
+| P1-1 事件总线 | W0 | `specs/realtime-progress/EVENT_BUS_SPEC.md` | ✅ 已交付 | `test_event_bus_regression.py` (EB-01…04) |
+| P1-2 流式调用 | W0 | `specs/realtime-progress/STREAMING_SPEC.md` | ✅ 已交付 | `test_streaming_regression.py` (ST-01…05) |
+| P1-3 SSE | W1 | `specs/realtime-progress/SSE_SPEC.md` | ✅ 已交付(本次) | `web/tests/test_generate_stream_regression.py` (SE-01…03) |
+| P1-4 取消 | W1 | `specs/realtime-progress/CANCEL_SPEC.md` | ✅ 已交付(本次) | `web/tests/test_cancel_regression.py` (CA-01…03) |
+| P1-5 前端面板 | W1 | `specs/realtime-progress/FRONTEND_PANEL_SPEC.md` | ✅ 已交付(本次) | `web/tests/test_realtime_panel_contract.py` (FE-01…03, FE-08) |
+| P1-6 异步 Job | W2 | — | ⬜ 待写 | `web/tests/test_job_regression.py` (规划) |
+| P1-7 部分结果 | W2 | — | ⬜ 待写 | `features/solver/tests/test_partial_result_regression.py` (规划) |
+| P1-8 可观测 | W2 | — | ⬜ 待写 | `web/tests/test_health_regression.py` (AT-O1…O2) |
+| P1-9 模型调优 | W3 | — | ⬜ 待写 | `features/solver/tests/test_model_tuning_regression.py` (AT-PF1…PF2) |
+| P1-10 docker | W3 | — | ⬜ 待写 | 部署验收 (AT-D1…D2) |
+| P1-11 拉题续拉 | W2 | `specs/problems-pull/PULL_CONTINUE_SPEC.md` | ✅ 已交付(本次) | `features/problems/tests/test_pull_continue_regression.py` (P11-01…03) |
+| P1-12 markdown | W2 | `specs/problems-markdown/MARKDOWN_CODE_BLOCK_SPEC.md` | ✅ 已交付(本次) | `features/problems/tests/test_markdown_codeblock_regression.py` (P12-01…03) |
+| P1-13 自定义问题 | W2 | `specs/custom-questions/CUSTOM_QUESTIONS.md` + `CHECK_SPEC.md` + `CUSTOM_QUESTIONS_UI.md` | ✅ 已交付 | CQ-01…06 / CK-01…09 / CU-01…19 |
+
+**下一步建议**：续写 P1-6 → P1-7 → P1-8 → P1-9 → P1-10（按 PHASE1_PLAN 依赖顺序；P1-8 与 P1-9 须各自带前端子 Epic 同波验收，见 §1.1）。
