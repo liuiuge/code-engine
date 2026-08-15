@@ -296,8 +296,8 @@ flowchart TD
 
 ## 7. Spec 交付进度（PM 跟踪）
 
-> 更新于 2026-08-14。W0/W1 小修复簇已落地；P1-6/7/8/9/10 待写。
-> **格式红线**：每份 spec 须含「人类校验指引（Manual Acceptance）」一节（环境 + 每条 AC 的手动步骤/通过/失败判定），见 `specs/README.md` 约定。已交付 spec（P1-1/2/3/4/5/11/12）均已补齐。
+> 更新于 2026-08-14。全部 13 个 Epic 详细 spec 已交付（含 P1-8/P1-9 前端子 Epic 同波验收）。
+> **格式红线**：每份 spec 须含「人类校验指引（Manual Acceptance）」一节（环境 + 每条 AC 的手动步骤/通过/失败判定），见 `specs/README.md` 约定。已交付 spec（P1-1…P1-13）均已补齐。
 
 | Epic | Wave | 详细 spec 路径 | 状态 | AC 映射回归 |
 |------|------|--------------|------|-----------|
@@ -306,13 +306,13 @@ flowchart TD
 | P1-3 SSE | W1 | `specs/realtime-progress/SSE_SPEC.md` | ✅ 已交付(本次) | `web/tests/test_generate_stream_regression.py` (SE-01…03) |
 | P1-4 取消 | W1 | `specs/realtime-progress/CANCEL_SPEC.md` | ✅ 已交付(本次) | `web/tests/test_cancel_regression.py` (CA-01…03) |
 | P1-5 前端面板 | W1 | `specs/realtime-progress/FRONTEND_PANEL_SPEC.md` | ✅ 已交付(本次) | `web/tests/test_realtime_panel_contract.py` (FE-01…03, FE-08) |
-| P1-6 异步 Job | W2 | — | ⬜ 待写 | `web/tests/test_job_regression.py` (规划) |
-| P1-7 部分结果 | W2 | — | ⬜ 待写 | `features/solver/tests/test_partial_result_regression.py` (规划) |
-| P1-8 可观测 | W2 | — | ⬜ 待写 | `web/tests/test_health_regression.py` (AT-O1…O2) |
-| P1-9 模型调优 | W3 | — | ⬜ 待写 | `features/solver/tests/test_model_tuning_regression.py` (AT-PF1…PF2) |
-| P1-10 docker | W3 | — | ⬜ 待写 | 部署验收 (AT-D1…D2) |
+| P1-6 异步 Job | W2 | `specs/async-job/ASYNC_JOB_SPEC.md` | ✅ 已交付(本次) | `web/tests/test_job_regression.py` (J-01…03) |
+| P1-7 部分结果 | W2 | `specs/partial-result/PARTIAL_RESULT_SPEC.md` | ✅ 已交付(本次) | `features/solver/tests/test_partial_result_regression.py` (PR-01…02) |
+| P1-8 可观测 | W2 | `specs/observability/OBSERVABILITY_SPEC.md` | ✅ 已交付(本次) | `web/tests/test_health_regression.py` (O-01…O2, O-FE) |
+| P1-9 模型调优 | W3 | `specs/model-tuning/MODEL_TUNING_SPEC.md` | ✅ 已交付(本次) | `features/solver/tests/test_model_tuning_regression.py` (PF-01…PF2, PF-FE) |
+| P1-10 docker | W3 | `specs/deploy-docker/DOCKER_SPEC.md` | ✅ 已交付(本次) | 部署冒烟 (D-01…D2) |
 | P1-11 拉题续拉 | W2 | `specs/problems-pull/PULL_CONTINUE_SPEC.md` | ✅ 已交付(本次) | `features/problems/tests/test_pull_continue_regression.py` (P11-01…03) |
 | P1-12 markdown | W2 | `specs/problems-markdown/MARKDOWN_CODE_BLOCK_SPEC.md` | ✅ 已交付(本次) | `features/problems/tests/test_markdown_codeblock_regression.py` (P12-01…03) |
 | P1-13 自定义问题 | W2 | `specs/custom-questions/CUSTOM_QUESTIONS.md` + `CHECK_SPEC.md` + `CUSTOM_QUESTIONS_UI.md` | ✅ 已交付 | CQ-01…06 / CK-01…09 / CU-01…19 |
 
-**下一步建议**：续写 P1-6 → P1-7 → P1-8 → P1-9 → P1-10（按 PHASE1_PLAN 依赖顺序；P1-8 与 P1-9 须各自带前端子 Epic 同波验收，见 §1.1）。
+**下一步**：全部 13 个 Epic 详细 spec 已交付，阶段一进入开发就绪状态。P1-8 与 P1-9 已各自带前端子 Epic（P1-8FE / P1-9FE）并标注同波硬 Gate（见 §1.1 矩阵）。
