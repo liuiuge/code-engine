@@ -420,7 +420,18 @@ async function openProblem(slug) {
     if (p.has_go_code) {
       html += '<div class="block"><button class="btn" id="to-gocode">查看生成的 Go 代码 →</button></div>';
     }
-    html += '<div class="block"><button class="btn" id="gen-code">生成 Go 代码</button> <span id="gen-status" class="meta"></span></div>';
+    // P1-9FE: speed/quality preference switch drives the first-try model
+    // (speed -> local, quality -> minimax) and the terminal `used_model` readout.
+    html += '<div class="block">' +
+      '<label style="color:var(--muted); font-size:12px; margin-right:8px">模型偏好 ' +
+      '<select id="gen-preference">' +
+      '<option value="speed">速度优先</option>' +
+      '<option value="quality">质量优先</option>' +
+      '</select></label>' +
+      '<button class="btn" id="gen-code">生成 Go 代码</button> ' +
+      '<span id="gen-status" class="meta"></span> ' +
+      '<span id="gen-used-model" class="meta"></span>' +
+      '</div>';
     html += '<div class="block"><button class="btn ghost" id="repull">从 LeetCode 重新拉取</button> <span id="repull-status" class="meta"></span></div>';
     html += '</div>';
     c.innerHTML = html;
@@ -430,11 +441,16 @@ async function openProblem(slug) {
     if (gc) gc.addEventListener('click', async () => {
       gc.disabled = true;
       const gs = $('gen-status');
-      gs.textContent = '生成中（LLM → 编译）…';
+      const pref = ($('gen-preference') && $('gen-preference').value) || 'speed';
+      gs.textContent = '生成中（LLM → 编译，' + (pref === 'quality' ? '质量优先' : '速度优先') + '）…';
       try {
-        const r = await apiPost('/api/problems/' + encodeURIComponent(p.titleSlug) + '/generate');
+        const r = await apiPost('/api/problems/' + encodeURIComponent(p.titleSlug)
+          + '/generate?preference=' + encodeURIComponent(pref));
         gs.textContent = r.success ? '完成 ✓ 编译通过' : '完成 ✗ 编译未通过';
-        if (r.task_name) openGoCode(r.task_name);
+        // Terminal state: show which model the generator actually hit
+        // (reuses the P1-8FE `gen-used-model` element).
+        renderUsedModel(r.used_model);
+        if (r.task_name) openGoCode(r.task_name, { used_model: r.used_model });
         else openProblem(p.titleSlug);
       } catch (e) {
         gs.textContent = '失败：' + e.message;
@@ -458,15 +474,29 @@ async function openProblem(slug) {
   } catch (e) { c.innerHTML = '<div class="err">加载失败：' + esc(e.message) + '</div>'; }
 }
 
-async function openGoCode(task) {
+/* P1-8FE / P1-9FE: single place that renders the `used_model` readout, so the
+ * speed/quality switch (P1-9FE) and the observability panel (P1-8FE) share one
+ * element (#gen-used-model) instead of building two competing UIs. */
+function usedModelLabel(usedModel) {
+  if (!usedModel) return '';
+  return '模型来源：' + usedModel + (usedModel === 'local' ? '（速度优先）' : '（质量优先）');
+}
+function renderUsedModel(usedModel) {
+  const um = $('gen-used-model');
+  if (um) um.textContent = usedModelLabel(usedModel);
+}
+
+async function openGoCode(task, extra) {
   showView('detail');
   const c = $('detail-content');
   c.innerHTML = '<div class="spinner">加载中…</div>';
   try {
     const g = await api('/api/go-code/' + encodeURIComponent(task));
+    const usedModel = (extra && extra.used_model) || null;
     let html = '<div class="detail"><h2>' + esc(g.task_name) + '</h2>' +
       '<div class="meta">' + esc(g.rel_path) + ' · ' + g.size_bytes + ' B · ' + g.line_count + ' 行' +
       (g.related_problem ? ' · 题目：<a href="#" id="to-problem">' + esc(g.related_problem) + '</a>' : '') + '</div>' +
+      (usedModel ? '<div class="meta"><span id="gen-used-model">' + esc(usedModelLabel(usedModel)) + '</span></div>' : '') +
       '<div class="block"><h3>源码</h3><pre class="code"><code>' + esc(g.content) + '</code></pre></div>' +
       '<div class="block"><a href="' + API_BASE + '/api/go-code/' + encodeURIComponent(task) + '/raw" target="_blank" rel="noopener" class="btn ghost">下载 .go 文件</a></div>' +
       '</div>';

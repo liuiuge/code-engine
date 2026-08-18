@@ -4,7 +4,7 @@ from pathlib import Path
 
 from langchain_ollama import ChatOllama
 
-from infrastructure.constants import VERIFY_MODE_DEFAULT
+from infrastructure.constants import PREFERENCE_QUALITY, VERIFY_MODE_DEFAULT
 from infrastructure.logger import logger
 from infrastructure.paths import MODEL_CONFIG_PATH, PROMPT_DIR
 
@@ -142,6 +142,12 @@ _TIMEOUT_BY_OLLAMA_MODEL = {
     spec["model"]: _MODEL_TIMEOUTS[name]
     for name, spec in _MODEL_CONFIG["models"].items()
 }
+# Reverse map: ollama model name -> registry key ("local" / "minimax"), so a
+# routed ChatOllama instance can be reported back as a stable registry name
+# (used for GenerateResult.used_model — see MODEL_TUNING_SPEC §3.3).
+_NAME_BY_OLLAMA_MODEL = {
+    spec["model"]: name for name, spec in _MODEL_CONFIG["models"].items()
+}
 
 # Validate the routing references up front so a typo fails loudly at import.
 if _ESCALATE_TO not in MODELS:
@@ -163,7 +169,8 @@ for _role in _HARD_ESCALATE_ROLES:
         )
 
 
-def get_llm_for_role(role: str, retry_count: int = 0, difficulty: str | None = None) -> ChatOllama:
+def get_llm_for_role(role: str, retry_count: int = 0, difficulty: str | None = None,
+                     preference: str | None = None) -> ChatOllama:
     """
     Pick the ``ChatOllama`` instance for a node role.
 
@@ -175,8 +182,15 @@ def get_llm_for_role(role: str, retry_count: int = 0, difficulty: str | None = N
     - Preemptive escalation: if the problem is LeetCode "Hard", the coder /
       fixer roles skip the local attempt and go straight to the online model
       (local VRAM / capability can't reliably crack Hard problems within budget).
+    - ``preference`` (P1-9, MODEL_TUNING_SPEC §3.1): ``"quality"`` makes the
+      escalatable roles skip the local attempt and use the online model on the
+      FIRST try; ``"speed"`` / ``None`` keeps the local-first baseline. It only
+      affects the first attempt — retry/timeout escalation is unchanged.
     """
     base_model = _ROLE_MODELS.get(role, DEFAULT_MODEL)
+    # Quality preference: escalatable roles start online (skip the local try).
+    if preference == PREFERENCE_QUALITY and role in _ESCALATE_ROLES:
+        return get_llm(_ESCALATE_TO)
     # Preemptive escalation for LeetCode Hard problems.
     if (role in _HARD_ESCALATE_ROLES
             and difficulty is not None
@@ -186,6 +200,32 @@ def get_llm_for_role(role: str, retry_count: int = 0, difficulty: str | None = N
     if role in _ESCALATE_ROLES and retry_count >= _ESCALATE_AFTER:
         return get_llm(_ESCALATE_TO)
     return get_llm(base_model)
+
+
+def model_registry_name(model) -> str | None:
+    """Registry key ('local' / 'minimax') for a routed model instance.
+
+    Falls back to the raw ollama model name when the instance is not one of the
+    registry entries (e.g. a test stub), and to ``None`` when unknown.
+    """
+    ollama_name = getattr(model, "model", None)
+    if ollama_name is None:
+        return None
+    return _NAME_BY_OLLAMA_MODEL.get(ollama_name, ollama_name)
+
+
+def resolve_role_model_name(role: str, retry_count: int = 0,
+                            difficulty: str | None = None,
+                            preference: str | None = None) -> str | None:
+    """Registry name of the model routing *would* pick — resolution only, no call.
+
+    Nodes use this to report ``used_model`` (MODEL_TUNING_SPEC §3.3) without
+    invoking anything; the actual call still goes through ``invoke_model`` so
+    the timeout/escalation logic stays in one place.
+    """
+    return model_registry_name(
+        get_llm_for_role(role, retry_count, difficulty, preference=preference)
+    )
 
 
 def _invoke_with_timeout(model: ChatOllama, prompt, timeout: int, **kwargs):
@@ -215,19 +255,22 @@ def _invoke_with_timeout(model: ChatOllama, prompt, timeout: int, **kwargs):
 
 
 def invoke_model(role: str, prompt, retry_count: int = 0,
-                 difficulty: str | None = None, **kwargs):
+                 difficulty: str | None = None, preference: str | None = None,
+                 **kwargs):
     """
     Invoke the model selected for ``role`` (handles escalation automatically).
 
-    - Routes by role, retry count, and problem difficulty (LeetCode Hard -> online).
+    - Routes by role, retry count, problem difficulty (LeetCode Hard -> online)
+      and the speed/quality ``preference`` (P1-9: quality -> online first try).
     - Enforces the per-model wall-clock timeout. If the *local* model times out,
       escalatable roles are retried on the online model instead of failing.
     """
-    model = get_llm_for_role(role, retry_count, difficulty)
+    model = get_llm_for_role(role, retry_count, difficulty, preference=preference)
     budget = _TIMEOUT_BY_OLLAMA_MODEL.get(model.model, _GLOBAL_TIMEOUT)
     logger.info(
         f"🔀 [Model Route] {role} -> {model.model} "
-        f"(retry={retry_count}, difficulty={difficulty}, timeout={budget}s)"
+        f"(retry={retry_count}, difficulty={difficulty}, "
+        f"preference={preference}, timeout={budget}s)"
     )
     try:
         return _invoke_with_timeout(model, prompt, budget, **kwargs)

@@ -128,6 +128,10 @@ class GenerateResult(BaseModel):
     verified: bool = False
     verify_result: str = ""
     verify_details: list = []
+    # Registry name of the model code_generator hit on its FIRST try
+    # ("local" for preference=speed, "minimax" for preference=quality).
+    # See specs/model-tuning/MODEL_TUNING_SPEC.md §3.3 (shared with P1-8 O-02).
+    used_model: str | None = None
 
 
 # --------------------------------------------------------------------------- #

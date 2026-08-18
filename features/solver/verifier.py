@@ -157,13 +157,46 @@ def _emit_helpers(meta: dict) -> tuple[str, set[str]]:
         "func cevSerialize(v interface{}) string {\n"
         "\tb, _ := json.Marshal(v)\n\treturn string(b)\n}"
     )
+    # cevEqual / cevSorted: order-insensitive comparison for multi-answer
+    # problems only (MODEL_TUNING_SPEC §3.2 / VERIFIER_ACCEPTANCE §8).
     helpers.append(
-        "func cevEqual(got, expected string) bool {\n"
+        "// cevEqual compares two JSON-serialized verifier outputs.\n"
+        "// normalize==true (multi_answer problem): scalar-element slices are\n"
+        "// order-normalized (parse -> sort -> compare) so valid reorderings such as\n"
+        "// two-sum index pairs [0,1] vs [1,0] count as equal. Otherwise the comparison\n"
+        "// is order-sensitive (whitespace-stripped string equality), matching\n"
+        "// VERIFIER_ACCEPTANCE.md §4.\n"
+        "func cevEqual(got, expected string, normalize bool) bool {\n"
+        "\tif normalize {\n"
+        "\t\tvar g, e interface{}\n"
+        "\t\tif json.Unmarshal([]byte(got), &g) == nil &&\n"
+        "\t\t\tjson.Unmarshal([]byte(expected), &e) == nil {\n"
+        "\t\t\tif gs, ok := g.([]interface{}); ok {\n"
+        "\t\t\t\tif es, ok2 := e.([]interface{}); ok2 && len(gs) > 0 {\n"
+        "\t\t\t\t\tif _, isScalar := gs[0].(float64); isScalar {\n"
+        "\t\t\t\t\t\treturn cevSorted(gs) == cevSorted(es)\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t}\n"
+        "\t\t\t}\n"
+        "\t\t}\n"
+        "\t}\n"
         "\treturn strings.ReplaceAll(got, \" \", \"\") == "
         "strings.ReplaceAll(strings.TrimSpace(expected), \" \", \"\")\n}"
     )
+    helpers.append(
+        "// cevSorted stringifies slice elements and returns them sorted, so element\n"
+        "// order no longer matters for scalar-element slices.\n"
+        "func cevSorted(xs []interface{}) string {\n"
+        "\tstrs := make([]string, len(xs))\n"
+        "\tfor i, v := range xs {\n"
+        "\t\tstrs[i] = fmt.Sprint(v)\n"
+        "\t}\n"
+        "\tsort.Strings(strs)\n"
+        "\treturn strings.Join(strs, \",\")\n}"
+    )
 
-    imports = {"encoding/json", "strings"}
+    # "fmt" / "sort" are always required by cevSorted, which is always emitted.
+    imports = {"encoding/json", "fmt", "sort", "strings"}
 
     if complex_needed:
         imports.add("strconv")
@@ -238,8 +271,14 @@ def _return_serializer(ret_type: str) -> str:
     return "cevSerialize"
 
 
-def _emit_test(meta: dict, cases: list[dict], mode: str) -> str:
-    """Generate ``verify_test.go`` for the given cases and verify mode."""
+def _emit_test(meta: dict, cases: list[dict], mode: str, normalize: bool = False) -> str:
+    """Generate ``verify_test.go`` for the given cases and verify mode.
+
+    ``normalize`` comes from the problem record's ``multi_answer`` flag: when
+    True the emitted ``cevEqual`` call compares scalar-element slices
+    order-insensitively (two-sum ``[1,0]`` vs ``[0,1]``); otherwise the
+    comparison stays order-sensitive.
+    """
     name = meta.get("name") or "Solution"
     params = meta.get("params", []) or []
 
@@ -267,9 +306,10 @@ def _emit_test(meta: dict, cases: list[dict], mode: str) -> str:
     if mode == "smoke":
         body_lines.append("\t\t_ = gotJSON")
     else:
+        normalize_lit = "true" if normalize else "false"
         body_lines.append(
             "\t\tif c.expected != \"\" {\n"
-            "\t\t\tif !cevEqual(gotJSON, c.expected) {\n"
+            f"\t\t\tif !cevEqual(gotJSON, c.expected, {normalize_lit}) {{\n"
             "\t\t\t\tt.Errorf(\"case %d: expected %s, got %s\", i, c.expected, gotJSON)\n"
             "\t\t\t}\n\t\t}"
         )
@@ -404,8 +444,12 @@ def verify_go_code(
     except Exception:
         return {"verify_result": VERIFY_SKIP_MESSAGE, "verify_details": [{"skipped": "cannot read code"}]}
 
+    # multi_answer problems (e.g. two-sum) accept any valid ordering of the
+    # returned scalars, so their comparison is order-normalized. Everything else
+    # keeps the order-sensitive comparison (VERIFIER_ACCEPTANCE §4).
+    normalize = bool((record or {}).get("multi_answer"))
     helpers_src, _ = _emit_helpers(meta)
-    test_src = _emit_test(meta, exec_cases, mode)
+    test_src = _emit_test(meta, exec_cases, mode, normalize=normalize)
     go_mod = f"module codeengineverify\n\ngo {_go_major_minor()}\n"
 
     (verify_dir / "solution.go").write_text(solution, encoding="utf-8")
