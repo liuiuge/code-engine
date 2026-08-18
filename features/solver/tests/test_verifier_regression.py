@@ -13,6 +13,9 @@ Coverage
 * AT-11  – verify failures share the retry budget and stop after 3 (no infinite loop).
 * AT-12/13 (wiring) – verify_result / verify_details surface on the final state and
   the fixer receives the verification failure.
+* PF-02 (§8 multi-answer, specs/model-tuning) – a two-sum answer returned in a
+  different but valid order passes when the record is flagged ``multi_answer``,
+  and still fails when it is not.
 
 Run:
     PYTHONPATH=. python features/solver/tests/test_verifier_regression.py
@@ -21,6 +24,8 @@ Run:
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -67,13 +72,35 @@ func main() {
 }
 '''
 
+# Correct, but returns the index pair in the reverse order of the canonical
+# LeetCode answer ([1,0] instead of [0,1]) — valid for a multi-answer problem.
+REVERSED = '''package main
+
+import "fmt"
+
+func twoSum(nums []int, target int) []int {
+\tm := make(map[int]int)
+\tfor i, num := range nums {
+\t\tif j, ok := m[target-num]; ok {
+\t\t\treturn []int{i, j}
+\t\t}
+\t\tm[num] = i
+\t}
+\treturn nil
+}
+
+func main() {
+\tfmt.Println(twoSum([]int{2, 7, 11, 15}, 9))
+}
+'''
+
 
 class _Resp:
     def __init__(self, content: str):
         self.content = content
 
 
-def _make_two_sum_record() -> dict:
+def _make_two_sum_record(multi_answer: bool | None = None) -> dict:
     rec = json.load(open(PROB / "two-sum.json"))
     # Synthesize description_md with the *canonical* LeetCode expected outputs.
     # NOTE: two-sum has multiple valid index answers; exact-match verification
@@ -87,6 +114,9 @@ def _make_two_sum_record() -> dict:
         "**Example 3:**\n"
         "**Input:** nums = [3,3], target = 6\n**Output:** [0,1]\n"
     )
+    # PF-02: `multi_answer` opts the record into order-insensitive comparison.
+    if multi_answer is not None:
+        rec["multi_answer"] = multi_answer
     return rec
 
 
@@ -161,6 +191,50 @@ class VerifierPipelineTest(unittest.TestCase):
     def test_no_record_skips(self):
         state = self._run(CORRECT, verify_mode="assert", record=None)
         self.assertEqual(state.get("verify_result"), VERIFY_SKIP_MESSAGE)
+
+    # ---- PF-02: multi_answer two-sum accepts a reordered valid answer -------
+    def test_multi_answer_reordered_answer_passes(self):
+        state = self._run(
+            REVERSED, verify_mode="assert",
+            record=_make_two_sum_record(multi_answer=True),
+        )
+        self.assertEqual(
+            state.get("verify_result"), VERIFY_PASS_MESSAGE,
+            f"multi_answer two-sum must accept [1,0] for expected [0,1], "
+            f"got {state.get('verify_result')!r}",
+        )
+        # A pass must not consume any retry budget.
+        self.assertEqual(state.get("retry_count", 0), 0)
+
+
+class MultiAnswerGuardTest(unittest.TestCase):
+    """PF-02 guard: order-normalization must stay opt-in (no graph, fast)."""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp()
+        self.code_path = Path(self._tmp) / "two_sum.go"
+        self.code_path.write_text(REVERSED, encoding="utf-8")
+
+    def tearDown(self):
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _verify(self, record):
+        from features.solver.verifier import verify_go_code
+        return verify_go_code(code_path=self.code_path, record=record, mode="assert")
+
+    def test_without_multi_answer_reordered_answer_still_fails(self):
+        out = self._verify(_make_two_sum_record())
+        self.assertTrue(
+            str(out["verify_result"]).startswith(VERIFY_FAIL_PREFIX),
+            f"order-sensitive problems must keep failing on reordering, got {out}",
+        )
+
+    def test_multi_answer_false_reordered_answer_still_fails(self):
+        out = self._verify(_make_two_sum_record(multi_answer=False))
+        self.assertTrue(
+            str(out["verify_result"]).startswith(VERIFY_FAIL_PREFIX),
+            f"multi_answer=false must keep failing on reordering, got {out}",
+        )
 
 
 class VerifierRoutingTest(unittest.TestCase):

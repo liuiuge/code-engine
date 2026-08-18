@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from features.problems.models import normalize_problem, render_problem_markdown
+from infrastructure.constants import is_multi_answer_problem
 
 
 def save_problem(problem: dict, output_dir: Path, save_markdown: bool = True) -> dict:
@@ -97,9 +98,19 @@ def load_problem_file(path) -> dict | None:
         return None
     if path.suffix == ".json":
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            rec = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return None
+        # multi_answer producer backfill (PF-03): historical caches predating the
+        # producer have no "multi_answer" key, so fill it from the slug/title
+        # allowlist. An *explicitly* stored value (True or False) is always
+        # honoured and never overridden, so ops/PM can hand-edit a record to
+        # override the default without it being clobbered on next load.
+        if "multi_answer" not in rec:
+            rec["multi_answer"] = is_multi_answer_problem(
+                rec.get("titleSlug"), rec.get("title")
+            )
+        return rec
     if path.suffix == ".md":
         text = path.read_text(encoding="utf-8")
         slug = path.stem

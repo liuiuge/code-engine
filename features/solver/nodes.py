@@ -1,10 +1,11 @@
 import re
 from pathlib import Path
 
-from infrastructure.config import PROMPTS, invoke_model
+from infrastructure.config import PROMPTS, invoke_model, resolve_role_model_name
 from infrastructure.constants import (
     Category,
     DEFAULT_TASK_NAME,
+    PREFERENCE_DEFAULT,
     PromptKey,
     StateKey,
     VERIFY_SKIP_MESSAGE,
@@ -48,18 +49,40 @@ def task_summarizer_node(state: AgentState):
     return {StateKey.TASK_DIR: slug}
 
 
+def _preference(state: AgentState) -> str:
+    """Routing preference carried by the state ("speed" unless overridden)."""
+    return state.get(StateKey.PREFERENCE) or PREFERENCE_DEFAULT
+
+
 @trace_node_detailed
 def code_generator_node(state: AgentState):
     prompt = PROMPTS[PromptKey.CODE_GENERATOR].format(
         input_question=state[StateKey.INPUT_QUESTION]
     )
-    # Pass difficulty so a LeetCode "Hard" problem escalates straight to online.
+    difficulty = state.get(StateKey.DIFFICULTY)
+    preference = _preference(state)
+    # Record which model this FIRST attempt actually routes to (speed -> local,
+    # quality -> minimax) so the API can surface it as `used_model`
+    # (MODEL_TUNING_SPEC §3.3). Resolution only — the call itself still goes
+    # through invoke_model.
+    used_model = resolve_role_model_name(
+        PromptKey.CODE_GENERATOR,
+        retry_count=0,
+        difficulty=difficulty,
+        preference=preference,
+    )
+    # Pass difficulty so a LeetCode "Hard" problem escalates straight to online,
+    # and preference so "quality" starts online on the first try.
     response = invoke_model(
         PromptKey.CODE_GENERATOR,
         prompt,
-        difficulty=state.get(StateKey.DIFFICULTY),
+        difficulty=difficulty,
+        preference=preference,
     )
-    return {StateKey.FINAL_OUTPUT: response.content}
+    return {
+        StateKey.FINAL_OUTPUT: response.content,
+        StateKey.USED_MODEL: used_model,
+    }
 
 
 @trace_node
@@ -126,6 +149,7 @@ def code_fixer_node(state: AgentState):
         fix_prompt,
         retry_count=current_retry,
         difficulty=state.get(StateKey.DIFFICULTY),
+        preference=_preference(state),
     )
     return {
         StateKey.FINAL_OUTPUT: response.content,
