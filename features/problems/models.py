@@ -211,6 +211,8 @@ def normalize_problem(problem: dict) -> dict:
     The record is the single source of truth stored as JSON. The Markdown view
     and the workflow's ``input_question`` string are both derived from it.
     """
+    from infrastructure.constants import is_multi_answer_problem
+
     slug = problem.get("titleSlug") or _slugify_filename(problem.get("title", "problem"))
     qid = problem.get("questionFrontendId") or problem.get("questionId") or ""
     tags = problem.get("topicTags") or []
@@ -230,6 +232,13 @@ def normalize_problem(problem: dict) -> dict:
         "codeSnippets": problem.get("codeSnippets") or [],
         "metaData": problem.get("metaData") or "",
         "go_template": _go_template(problem),
+        # multi_answer producer (PF-03): LeetCode does not expose this flag, so
+        # it is produced code-side from the slug. The verifier uses it to switch
+        # to order-insensitive comparison for problems with order-independent
+        # answers (e.g. two-sum index pairs). This constructor is the single
+        # source of canonical records, shared by save_problem (persist) and
+        # fetch_live_problem (live) -> new/pulled/realtime problems all carry it.
+        "multi_answer": is_multi_answer_problem(slug, problem.get("title")),
     }
     return record
 

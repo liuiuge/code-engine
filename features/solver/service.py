@@ -14,6 +14,7 @@ from features.problems.service import (
 from features.solver.precheck import is_leetcode_reference, precheck_custom_question
 from features.solver.workflow import app
 from infrastructure.config import get_verify_mode
+from infrastructure.constants import PREFERENCE_DEFAULT
 from infrastructure.paths import DEFAULT_CUSTOM_QUESTIONS_DIR
 
 
@@ -23,12 +24,14 @@ def run_pipeline(
     leetcode_slug: str | None,
     problem_record: dict | None = None,
     verify_mode: str | None = None,
+    preference: str | None = None,
 ) -> dict:
     """Run the code-generation workflow and return its final state dict.
 
     ``problem_record`` carries the example test cases the verifier needs; it is
     ``None`` for freeform coding questions (the verifier then no-ops). ``verify_mode``
-    overrides the global default when provided.
+    overrides the global default when provided. ``preference`` selects the
+    speed/quality routing of the escalatable roles (P1-9, default ``"speed"``).
     """
     return app.invoke({
         "input_question": input_question,
@@ -36,6 +39,7 @@ def run_pipeline(
         "leetcode_slug": leetcode_slug,
         "problem_record": problem_record,
         "verify_mode": verify_mode or get_verify_mode(),
+        "preference": preference or PREFERENCE_DEFAULT,
     })
 
 
@@ -44,14 +48,15 @@ def generate_for_problem(
     problems_dir: str | Path = DEFAULT_OUTPUT_DIR,
     live: bool = True,
     verify_mode: str | None = None,
+    preference: str | None = None,
 ) -> dict:
     """
     Resolve a LeetCode problem and generate its Go code via the workflow.
 
     Shared by the CLI (features/solver/example/main.py) and the FastAPI layer
-    (web/routes/go_code.py). Returns the workflow result dict (contains
+    (web/routes/problems.py). Returns the workflow result dict (contains
     ``code_path``, ``build_result``, ``category``, ``task_dir``, ``verify_result``,
-    etc.). Raises ``ValueError`` if the problem cannot be resolved.
+    ``used_model``, etc.). Raises ``ValueError`` if the problem cannot be resolved.
     """
     record = resolve_problem(query, output_dir=problems_dir, live=live)
     if not record:
@@ -65,6 +70,7 @@ def generate_for_problem(
         leetcode_slug,
         problem_record=record,
         verify_mode=verify_mode,
+        preference=preference,
     )
 
 
@@ -78,6 +84,7 @@ def generate_for_query(
     no_confirm: bool = False,
     verify_mode: str | None = None,
     live: bool = False,
+    preference: str | None = None,
 ) -> dict:
     """Unified generate entry point (CK-09 entry).
 
@@ -85,6 +92,7 @@ def generate_for_query(
       path, with **no** dedup precheck.
     - Otherwise -> the custom flow (precheck + confirm-or-create, CQ-01..06).
 
+    ``preference`` (P1-9) is forwarded to the pipeline on both branches.
     Returns a dict with at least ``status`` and ``needs_confirm`` keys.
     """
     if is_leetcode_reference(query, problems_dir=problems_dir):
@@ -97,6 +105,7 @@ def generate_for_query(
             record.get("titleSlug"),
             problem_record=record,
             verify_mode=verify_mode,
+            preference=preference,
         )
         return {
             "status": "leetcode",
@@ -110,6 +119,7 @@ def generate_for_query(
         custom_dir=custom_dir,
         no_confirm=no_confirm,
         verify_mode=verify_mode,
+        preference=preference,
     )
 
 
@@ -119,6 +129,7 @@ def generate_custom_question(
     custom_dir: str | Path = DEFAULT_CUSTOM_QUESTIONS_DIR,
     no_confirm: bool = False,
     verify_mode: str | None = None,
+    preference: str | None = None,
 ) -> dict:
     """Run the custom-question flow for a free-text question (CQ-03/04/05/06).
 
@@ -141,7 +152,9 @@ def generate_custom_question(
         }
 
     # no_match, or match + headless (no_confirm) -> create & run (CQ-06 / CQ-05).
-    return _create_and_run(input_text, pre, problems_dir, custom_dir, verify_mode)
+    return _create_and_run(
+        input_text, pre, problems_dir, custom_dir, verify_mode, preference=preference
+    )
 
 
 def _create_and_run(
@@ -150,6 +163,7 @@ def _create_and_run(
     problems_dir: str | Path,
     custom_dir: str | Path,
     verify_mode: str | None,
+    preference: str | None = None,
 ) -> dict:
     """Run the pipeline for a free-text question and persist a custom record."""
     result = run_pipeline(
@@ -158,6 +172,7 @@ def _create_and_run(
         leetcode_slug=None,
         problem_record=None,
         verify_mode=verify_mode,
+        preference=preference,
     )
     record = save_custom_question(
         {
@@ -189,6 +204,7 @@ def confirm_custom_question(
     problems_dir: str | Path = DEFAULT_OUTPUT_DIR,
     custom_dir: str | Path = DEFAULT_CUSTOM_QUESTIONS_DIR,
     verify_mode: str | None = None,
+    preference: str | None = None,
 ) -> dict:
     """Resolve a ``needs_confirm`` outcome (CQ-03 confirm step).
 
@@ -207,6 +223,7 @@ def confirm_custom_question(
             record.get("titleSlug"),
             problem_record=record,
             verify_mode=verify_mode,
+            preference=preference,
         )
         return {
             "status": "reused",
@@ -224,5 +241,6 @@ def confirm_custom_question(
         problems_dir,
         custom_dir,
         verify_mode,
+        preference=preference,
     )
 

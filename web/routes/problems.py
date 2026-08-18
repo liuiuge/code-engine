@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
-from infrastructure.constants import VERIFY_PASS_MESSAGE
+from infrastructure.constants import PREFERENCE_DEFAULT, VERIFY_PASS_MESSAGE
 from features.problems.service import (
     fetch_live_problem,
     fetch_problem_detail,
@@ -268,13 +269,16 @@ async def pull_one_problem(identifier: str):
 # --------------------------------------------------------------------------- #
 # Generate endpoint (lazy-imports the solver pipeline)
 # --------------------------------------------------------------------------- #
-def _do_generate(identifier: str) -> GenerateResult:
+def _do_generate(identifier: str, preference: str = PREFERENCE_DEFAULT) -> GenerateResult:
     """Run the code-engine workflow to generate Go code for a problem.
 
     Reuses ``features.solver.service.generate_for_problem`` (which wraps the
     LangGraph pipeline) so the CLI and the API share the same code path. Heavy
     deps (langgraph, langchain-ollama, pyyaml) are imported lazily so the rest of
     the API stays importable even if they are missing.
+
+    ``preference`` (P1-9) selects the first-try routing of the code generator /
+    fixer: ``speed`` (local first) or ``quality`` (online first).
     """
     try:
         from features.solver.service import generate_for_problem
@@ -284,7 +288,12 @@ def _do_generate(identifier: str) -> GenerateResult:
         )
 
     try:
-        res = generate_for_problem(identifier, problems_dir=str(PROBLEMS_DIR), live=False)
+        res = generate_for_problem(
+            identifier,
+            problems_dir=str(PROBLEMS_DIR),
+            live=False,
+            preference=preference,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -311,6 +320,7 @@ def _do_generate(identifier: str) -> GenerateResult:
         verified=verify_result == VERIFY_PASS_MESSAGE,
         verify_result=verify_result,
         verify_details=res.get("verify_details") or [],
+        used_model=res.get("used_model"),
     )
 
 
@@ -319,10 +329,19 @@ def _do_generate(identifier: str) -> GenerateResult:
     response_model=GenerateResult,
     tags=["problems"],
 )
-async def generate_problem_code(identifier: str):
+async def generate_problem_code(
+    identifier: str,
+    preference: Literal["speed", "quality"] = Query(
+        PREFERENCE_DEFAULT,
+        description="Model routing preference: 'speed' (local first) or "
+                    "'quality' (online/minimax on the first try).",
+    ),
+):
     """Generate Go code for a problem by running the code-engine workflow.
 
     Resolves the problem from the local cache (no live LeetCode fetch), then runs
     the intent→summarize→generate→compile(+fix) pipeline and returns the result.
+    ``preference`` only changes the FIRST-try model routing (P1-9); the returned
+    ``used_model`` reports which model the generator actually hit.
     """
-    return await asyncio.to_thread(_do_generate, identifier)
+    return await asyncio.to_thread(_do_generate, identifier, preference)
