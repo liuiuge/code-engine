@@ -59,16 +59,21 @@ def _run_harness() -> dict:
     node = _find_node()
     if not node:
         raise unittest.SkipTest("node executable not found; cannot run front-end UI harness")
+    # Capture raw bytes (NOT text mode): on Windows the locale default encoding
+    # is GBK, which cannot decode the UTF-8 JSON the Node harness emits, leaving
+    # proc.stdout as None. Decode explicitly as UTF-8 to stay cross-platform.
     proc = subprocess.run(
         [node, str(HARNESS), str(INDEX)],
-        capture_output=True, text=True, cwd=str(REPO), timeout=180,
+        capture_output=True, cwd=str(REPO), timeout=180,
     )
     if proc.returncode != 0:
         raise AssertionError(
             "node UI harness failed (rc=%s)\n--- stdout ---\n%s\n--- stderr ---\n%s"
-            % (proc.returncode, proc.stdout, proc.stderr)
+            % (proc.returncode,
+               proc.stdout.decode("utf-8", "replace"),
+               proc.stderr.decode("utf-8", "replace"))
         )
-    return json.loads(proc.stdout)
+    return json.loads(proc.stdout.decode("utf-8"))
 
 
 # --------------------------------------------------------------------------- #
