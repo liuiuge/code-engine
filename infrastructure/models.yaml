@@ -9,7 +9,7 @@
 # `default` selects which model `config.llm` (the shared instance used by all
 # nodes) points at. Switch it to `local` to run fully offline / faster.
 
-default: minimax
+default: gemma4:cloud
 
 # Global wall-clock cap (seconds) for a single model call. A local model that
 # "thinks" for 13 minutes (as seen in production logs) is worse than failing
@@ -42,6 +42,19 @@ models:
     timeout: 300
     extra_params: {}
 
+  # Online / cloud alternative model (e.g. browser-extension option). Same
+  # online profile as minimax: reasoning ON, accuracy over latency. Selectable
+  # as a `preference` value so code_generator / code_fixer start on it directly.
+  gemma4:cloud:
+    type: online
+    provider: ollama
+    model: gemma4:cloud
+    base_url: http://127.0.0.1:11434
+    temperature: 0.1
+    thinking: true
+    timeout: 300
+    extra_params: {}
+
 # ---------------------------------------------------------------------------
 # Per-role routing: which model each node uses, to balance local vs online.
 #
@@ -65,7 +78,7 @@ routing:
     problem_match: local          # dedup precheck: cheap yes/no JSON judgment, keep on local
 
   escalate_after_retries: 1       # after 1 failed build, switch coder/fixer to online
-  escalate_to: minimax
+  escalate_to: gemma4:cloud       # default online model (replaces minimax; gemma4 has cloud credits)
   escalate_roles:
     - code_generator
     - code_fixer
