@@ -155,6 +155,12 @@ class CustomCreateRequest(BaseModel):
     no_confirm: bool = Field(
         False, description="Skip confirmation and create directly (headless/CLI behavior)."
     )
+    preference: str | None = Field(
+        None,
+        description="Model routing: 'quality' (online minimax first) | 'speed' (local first) "
+        "| a registered online model name like 'gemma4:cloud' (use it directly). "
+        "None falls back to the backend default.",
+    )
     problems_dir: str | None = Field(None, description="Override problems dir (testing).")
 
 
@@ -163,6 +169,11 @@ class CustomConfirmRequest(BaseModel):
     text: str = Field(..., description="Original free-text question.")
     decision: str = Field(..., description="'reuse' (open matched) or 'not_related' (new).")
     matched_slug: str | None = Field(None, description="Slug of the matched problem (for reuse).")
+    preference: str | None = Field(
+        None,
+        description="Model routing: 'quality' (online minimax first) | 'speed' (local first) "
+        "| a registered online model name like 'gemma4:cloud' (use it directly).",
+    )
     problems_dir: str | None = Field(None, description="Override problems dir (testing).")
 
 

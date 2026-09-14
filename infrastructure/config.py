@@ -184,13 +184,25 @@ def get_llm_for_role(role: str, retry_count: int = 0, difficulty: str | None = N
       (local VRAM / capability can't reliably crack Hard problems within budget).
     - ``preference`` (P1-9, MODEL_TUNING_SPEC §3.1): ``"quality"`` makes the
       escalatable roles skip the local attempt and use the online model on the
-      FIRST try; ``"speed"`` / ``None`` keeps the local-first baseline. It only
-      affects the first attempt — retry/timeout escalation is unchanged.
+      FIRST try; ``"speed"`` / ``None`` keeps the local-first baseline. A
+      ``preference`` that names a model registered in models.yaml (e.g.
+      ``"gemma4:cloud"``) routes the escalatable roles straight to that model on
+      the FIRST try. It only affects the first attempt — retry/timeout
+      escalation is unchanged.
     """
     base_model = _ROLE_MODELS.get(role, DEFAULT_MODEL)
     # Quality preference: escalatable roles start online (skip the local try).
     if preference == PREFERENCE_QUALITY and role in _ESCALATE_ROLES:
         return get_llm(_ESCALATE_TO)
+    # Direct online-model preference (e.g. "gemma4:cloud"): escalatable roles
+    # start on that specific model instead of the local first try.
+    if (
+        role in _ESCALATE_ROLES
+        and preference
+        and preference != PREFERENCE_QUALITY
+        and preference in MODELS
+    ):
+        return get_llm(preference)
     # Preemptive escalation for LeetCode Hard problems.
     if (role in _HARD_ESCALATE_ROLES
             and difficulty is not None

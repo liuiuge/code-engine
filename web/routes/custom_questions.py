@@ -66,6 +66,7 @@ async def create_custom_question(req: CustomCreateRequest):
             problems_dir=_problems_dir(req.problems_dir),
             custom_dir=_custom_dir(None),
             no_confirm=req.no_confirm,
+            preference=req.preference,
         )
 
     try:
@@ -87,6 +88,7 @@ async def confirm_custom_question(req: CustomConfirmRequest):
             matched_slug=req.matched_slug,
             problems_dir=_problems_dir(req.problems_dir),
             custom_dir=_custom_dir(None),
+            preference=req.preference,
         )
 
     try:

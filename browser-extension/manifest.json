@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "CodeEngine Inject",
+  "version": "0.1.0",
+  "description": "选中题目文字，按快捷键（默认 Ctrl+Shift+Y，可在扩展选项页修改）调用本地 code-engine 生成 Go 代码并写入当前页面的聊天框。",
+  "permissions": ["storage"],
+  "host_permissions": ["http://localhost:8000/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html"
+}

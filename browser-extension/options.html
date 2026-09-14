@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN" data-page-node-id="fDm2rWzVJWRzSIVApVKF7M">
+  <head data-page-node-id="f2Yo25RQC4MHF9fEkBJ68n">
+    <meta charset="utf-8" data-page-node-id="XDGsLDqUss6Iot4cclvdA5" />
+    <title>CodeEngine Inject 设置</title>
+    <style>
+      body { font: 14px/1.6 system-ui, sans-serif; padding: 24px; max-width: 580px; }
+      label { display: block; margin-bottom: 14px; }
+      input[type="text"] { width: 100%; padding: 6px 8px; box-sizing: border-box; }
+      button { padding: 6px 14px; cursor: pointer; }
+      #status { margin-left: 10px; color: #1f6f43; }
+      .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      #shortcutLabel { font-weight: 600; }
+      #recBtn.recording { background: #1f6f43; color: #fff; }
+      hr { border: none; border-top: 1px solid #eee; margin: 20px 0; }
+      code { background: #f3f3f3; padding: 1px 5px; border-radius: 4px; }
+      #humanTestOutput {
+        width: 100%;
+        min-height: 250px;
+        box-sizing: border-box;
+        margin-top: 10px;
+        padding: 10px;
+        resize: vertical;
+        font: 14px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+      #humanTestStatus { color: #666; }
+    </style>
+  </head>
+  <body data-page-node-id="KzT4iTnBV3ovUgApOWCxMF">
+    <h3 data-page-node-id="tAokSyPJzmLfStw4eEfKYj">CodeEngine Inject</h3>
+
+    <label data-page-node-id="cVuy6vDn3GsFkHl5eSsKEQ">
+      后端地址
+      <input id="url" type="text" placeholder="http://localhost:8000" data-page-node-id="nYRUNmvTdXB0t7618WIeND" />
+    </label>
+
+    <label style="margin-top: 14px" data-page-node-id="prefLabel">
+      代码生成模型路由
+      <select id="pref" data-page-node-id="prefSelect">
+        <option value="quality">quality（优先 minimax-m3:cloud 在线）</option>
+        <option value="speed">speed（本地优先，失败升级在线）</option>
+        <option value="gemma4:cloud">gemma4:cloud（在线）</option>
+      </select>
+    </label>
+
+    <label style="margin-top: 14px" data-page-node-id="hintsLabel">
+      <input id="hints" type="checkbox" data-page-node-id="hintsCheck" />
+      显示状态提示（toast）
+    </label>
+
+    <label style="margin-top: 14px" data-page-node-id="humanLabel">
+      <input id="human" type="checkbox" data-page-node-id="humanCheck" />
+      拟人输入（慢速逐词写入，实验性；仅对 textarea/input 生效）
+    </label>
+
+    <hr  data-page-node-id="O14H01i7v0hbickx2tYA8v"/>
+
+    <div data-page-node-id="YrN3AmZGQBj6mrwAn28l4Q">
+      <div style="margin-bottom: 8px" data-page-node-id="DtJYFBn1tk2CwmS4FH3HDj">
+        快捷键（默认 <code data-page-node-id="4MBbwhD5HAvHTBk4B3w3hN">Ctrl+Shift+Y</code>，页面内捕获，可在下方修改）
+      </div>
+      <div class="row" data-page-node-id="0ecXQvZnIFTTNHuELv7tYZ">
+        <button id="recBtn" type="button" data-page-node-id="7PsOvEc7e9ip7keWHYj5oD">点击录制</button>
+        <span data-page-node-id="Pn4e6UaCil8R6YSkCXpN80">当前：</span>
+        <span id="shortcutLabel" data-page-node-id="KH8RXkvdy3Kc0tQMUaHSsY">—</span>
+        <button id="resetBtn" type="button" data-page-node-id="rWgHcdPupFHjPrMWxwXgQo">恢复默认</button>
+      </div>
+      <p style="color: #666; margin-top: 8px" data-page-node-id="OWBssRwyW7OTfNcXles8JT">
+        点「点击录制」后直接按下想要的组合键（如 <code data-page-node-id="vBGGXJRIfqOfzjD4d1t7GK">Ctrl+Shift+Y</code>）即可保存。
+        采用页面内捕获，因此不受 Chrome 对 <code data-page-node-id="RF6eBu4pksx2kzejBEgyWB">Ctrl+Alt</code> 的禁用限制；
+        修改后立即对新页面生效（已打开的页面刷新一次）。
+      </p>
+    </div>
+
+    <hr data-page-node-id="humanTestHr" />
+    <div data-page-node-id="humanTestSection">
+      <div style="margin-bottom: 8px" data-page-node-id="humanTestTitle">拟人输入测试</div>
+      <div class="row" data-page-node-id="humanTestRow">
+        <button id="humanTestBtn" type="button" data-page-node-id="humanTestButton">开始测试</button>
+        <span id="humanTestStatus" data-page-node-id="humanTestStatusText"></span>
+      </div>
+      <textarea id="humanTestOutput" readonly aria-label="拟人输入测试预览" data-page-node-id="humanTestTextarea"></textarea>
+    </div>
+
+    <hr data-page-node-id="saveHr" />
+    <div class="row" data-page-node-id="saveRow">
+      <button id="save" type="button" data-page-node-id="5W07YFlCuyX34dRCTlzaUy">保存</button>
+      <span id="status" data-page-node-id="09q3JXHI2eOSI0L4s3QEiW"></span>
+    </div>
+
+    <script src="options.js"></script>
+  </body>
+</html>
